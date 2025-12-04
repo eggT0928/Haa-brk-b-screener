@@ -108,18 +108,10 @@ def display_results(
     total_balance: float,
     target_date: pd.Timestamp
 ):
-    """결과 표시"""
-    # ==== 위쪽: 요약 정보 출력 ====
-    st.subheader("📊 설정 정보")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("기준 날짜", target_date.strftime('%Y-%m-%d'))
-    with col2:
-        st.metric("보유 금액", f"${total_balance:,.2f}")
-
-    st.subheader("✅ 선택된 자산")
+    """결과 표시 및 데이터 반환"""
     haa_bal = total_balance * 0.8
     
+    # 선택된 자산 데이터 준비
     selected_data = []
     for asset, score in selected_assets:
         price = data.loc[target_date, asset]
@@ -131,16 +123,29 @@ def display_results(
             "구매 수량": f"{shares:.2f}"
         })
     
+    # BRK-B 모멘텀 점수 계산
     brk_price = data.loc[target_date, "BRK-B"]
     brk_shares = total_balance * 0.2 / brk_price
+    brk_momentum = momentum_scores.loc[target_date, "BRK-B"]
     selected_data.append({
         "자산": "BRK-B",
-        "모멘텀 점수": "-",
+        "모멘텀 점수": f"{brk_momentum:.3f}",
         "현재 가격": f"${brk_price:.2f}",
         "구매 수량": f"{brk_shares:.2f}"
     })
     
-    st.dataframe(pd.DataFrame(selected_data), use_container_width=True, hide_index=True)
+    # 반환할 데이터 준비
+    result_data = {
+        "target_date": target_date,
+        "total_balance": total_balance,
+        "selected_data": selected_data,
+        "momentum_scores": momentum_scores,
+        "data": data,
+        "tickers": tickers,
+        "selected_assets": selected_assets,
+        "haa_bal": haa_bal,
+        "brk_shares": brk_shares
+    }
 
     # ==== 아래쪽: 전체 자산군 테이블 생성 ====
     st.subheader("📈 전체 자산군 분석")
@@ -195,7 +200,8 @@ def display_results(
     for col in ["1M (%)", "3M (%)", "6M (%)", "12M (%)"]:
         df[col] = df[col].apply(lambda x: f"{x:.2f}%")
 
-    return df
+    result_data["df"] = df
+    return result_data
 
 
 # ==== Streamlit 앱 메인 ====
@@ -223,8 +229,8 @@ with st.sidebar:
             if total_balance <= 0:
                 st.error("보유 금액은 0보다 커야 합니다.")
             else:
-                df_result = run_screener(total_balance)
-                st.session_state['result_df'] = df_result
+                result_data = run_screener(total_balance)
+                st.session_state['result_data'] = result_data
                 st.session_state['balance'] = total_balance
         except ValueError:
             st.error("올바른 숫자를 입력해주세요.")
@@ -232,22 +238,59 @@ with st.sidebar:
             st.error(f"오류 발생: {e}")
     
     if st.button("🔄 초기화", use_container_width=True):
-        if 'result_df' in st.session_state:
-            del st.session_state['result_df']
+        if 'result_data' in st.session_state:
+            del st.session_state['result_data']
         if 'balance' in st.session_state:
             del st.session_state['balance']
         st.rerun()
+    
+    # ==== 사이드바에 설정 정보 표시 ====
+    if 'result_data' in st.session_state:
+        st.markdown("---")
+        st.subheader("📊 설정 정보")
+        result_data = st.session_state['result_data']
+        st.metric("기준 날짜", result_data['target_date'].strftime('%Y-%m-%d'))
+        st.metric("보유 금액", f"${result_data['total_balance']:,.2f}")
+        
+        st.markdown("---")
+        st.subheader("✅ 선택된 자산")
+        selected_df = pd.DataFrame(result_data['selected_data'])
+        st.dataframe(selected_df, use_container_width=True, hide_index=True)
 
 # 메인 영역에 결과 표시
-if 'result_df' in st.session_state:
+if 'result_data' in st.session_state:
+    result_data = st.session_state['result_data']
+    
+    # ==== 본문에 기준 날짜와 투자 금액 표시 ====
+    st.subheader("📊 설정 정보")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("기준 날짜", result_data['target_date'].strftime('%Y-%m-%d'))
+    with col2:
+        st.metric("보유 금액", f"${result_data['total_balance']:,.2f}")
+    
+    st.markdown("---")
+    
+    # ==== 선택된 자산 표시 ====
+    st.subheader("✅ 선택된 자산")
     st.dataframe(
-        st.session_state['result_df'],
+        pd.DataFrame(result_data['selected_data']),
+        use_container_width=True,
+        hide_index=True
+    )
+    
+    st.markdown("---")
+    
+    # ==== 전체 자산군 분석 테이블 ====
+    st.subheader("📈 전체 자산군 분석")
+    st.dataframe(
+        result_data['df'],
         use_container_width=True,
         height=400
     )
     
     # CSV 다운로드 버튼
-    csv = st.session_state['result_df'].to_csv(index=True)
+    csv = result_data['df'].to_csv(index=True)
     st.download_button(
         label="📥 CSV로 다운로드",
         data=csv,
