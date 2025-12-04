@@ -59,13 +59,14 @@ def run_screener(total_balance: float):
     end_date = pd.Timestamp.now().strftime("%Y-%m-%d")
     
     with st.spinner("데이터를 다운로드하는 중..."):
+        # 수정주가(Adj Close) 다운로드 - 배당/분할을 반영한 가격
         data = yf.download(
             tickers,
             start=start_date,
             end=end_date,
             auto_adjust=False,
             progress=False
-        )["Adj Close"]
+        )["Adj Close"]  # 수정주가 사용 (모멘텀 점수 계산에 사용)
         data.index = data.index.tz_localize(None)
 
         # 2) 오늘 장중 가격(fast_info)을 마지막 행으로 추가
