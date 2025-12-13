@@ -75,9 +75,10 @@ def run_screener(total_balance: float):
         for t in tickers:
             try:
                 ticker = yf.Ticker(t)
-                fast_prices[t] = ticker.fast_info.get("last_price", data[t].iloc[-1])
+                # 장중 가격 직접 접근 (실패 시 예외 발생)
+                fast_prices[t] = ticker.fast_info["last_price"]
             except:
-                # fast_info 실패 시 마지막 가격 사용
+                # fast_info 실패 시 마지막 가격 사용 (장중 가격이 아닐 수 있음)
                 fast_prices[t] = data[t].iloc[-1]
         
         if today not in data.index:
