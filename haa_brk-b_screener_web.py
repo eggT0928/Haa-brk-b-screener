@@ -596,8 +596,19 @@ def create_monthly_distribution(monthly_returns):
     # 중간값 계산 (각 구간의 중간값)
     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
     
+    # 구간 레이블 생성 (예: "[-10%, -9%)", "[-9%, -8%)", ..., "[0%, 1%)", "[1%, 2%)")
+    bin_labels = []
+    for i in range(len(bin_edges) - 1):
+        left = int(bin_edges[i])
+        right = int(bin_edges[i + 1])
+        if right == 10:
+            bin_labels.append(f"[{left}%, {right}%]")
+        else:
+            bin_labels.append(f"[{left}%, {right}%)")
+    
     return pd.DataFrame({
         'bin_center': bin_centers,
+        'bin_label': bin_labels,
         'count': hist
     })
 
@@ -959,10 +970,10 @@ if 'result_data' in st.session_state:
                         [0.8, '#2e7d32'],     # 초록
                         [1.0, '#1b5e20']      # 진한 초록 (최대값)
                     ],
-                    text=[[f"{val:.1f}%" if not pd.isna(val) else "" for val in row] 
+                    text=[[f"<b>{val:.1f}%</b>" if not pd.isna(val) else "" for val in row] 
                           for row in heatmap_data.values],
                     texttemplate='%{text}',
-                    textfont={"size": 10},
+                    textfont={"size": 15, "color": "black"},
                     colorbar=dict(
                         title="수익률 (%)",
                         tickmode='array',
@@ -1002,11 +1013,11 @@ if 'result_data' in st.session_state:
                 # 비율 계산
                 dist_data['percentage'] = (dist_data['count'] / total_count * 100) if total_count > 0 else 0
                 
-                # 색상 설정 (음수: 빨강, 양수: 초록)
+                # 색상 설정 (음수: 빨강, 양수: 초록, 0은 초록)
                 colors = ['#d32f2f' if x < 0 else '#2e7d32' for x in dist_data['bin_center']]
                 
-                # X축 레이블 생성 (모든 구간 표시: -10%, -9%, -8%, ..., 9%, 10%)
-                x_labels = [f"{int(bin_center)}%" for bin_center in dist_data['bin_center']]
+                # X축 레이블 생성 (구간 형식: "[-10%, -9%)", "[-9%, -8%)", ..., "[0%, 1%)", "[1%, 2%)")
+                x_labels = dist_data['bin_label'].tolist()
                 
                 fig = go.Figure()
                 fig.add_trace(go.Bar(
@@ -1016,22 +1027,24 @@ if 'result_data' in st.session_state:
                     name='빈도',
                     text=[f"{pct:.1f}%" if count > 0 else "" for count, pct in zip(dist_data['count'], dist_data['percentage'])],
                     textposition='outside',
-                    textfont={"size": 10},
-                    hovertemplate='수익률: %{x}<br>빈도: %{y}회<br>비율: %{customdata:.1f}%<extra></extra>',
+                    textfont={"size": 11},
+                    hovertemplate='구간: %{x}<br>빈도: %{y}회<br>비율: %{customdata:.1f}%<extra></extra>',
                     customdata=dist_data['percentage']
                 ))
                 fig.update_layout(
-                    xaxis_title="수익률 (%)",
+                    xaxis_title="수익률 구간 (%)",
                     yaxis_title="빈도 (회)",
-                    height=400,
+                    height=450,
                     showlegend=False,
                     hovermode='x unified',
                     xaxis=dict(
-                        tickmode='linear',
-                        tick0=-10,
-                        dtick=1,  # 1% 간격으로 모든 틱 표시
-                        tickangle=-45  # 레이블 회전
-                    )
+                        tickmode='array',
+                        tickvals=x_labels,
+                        ticktext=x_labels,
+                        tickangle=-45,  # 레이블 회전
+                        tickfont={"size": 9}  # X축 레이블 크기
+                    ),
+                    margin=dict(b=100)  # 하단 여백 증가 (회전된 레이블을 위해)
                 )
                 st.plotly_chart(fig, use_container_width=True)
             
