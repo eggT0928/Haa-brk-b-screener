@@ -1,7 +1,10 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-from datetime import datetime
+import numpy as np
+from datetime import datetime, timedelta
+import plotly.graph_objects as go
+import plotly.express as px
 
 
 def calculate_momentum_scores(data: pd.DataFrame) -> pd.DataFrame:
@@ -23,10 +26,12 @@ def calculate_momentum_scores(data: pd.DataFrame) -> pd.DataFrame:
     return aligned_data.T.groupby(level="Ticker").mean().T
 
 
-def select_assets(momentum_scores: pd.DataFrame, data: pd.DataFrame):
+def select_assets(momentum_scores: pd.DataFrame, data: pd.DataFrame, target_date: pd.Timestamp = None):
     """TIP 기준으로 자산 선택 (offense/defense)"""
-    # 가장 마지막 인덱스(=오늘 날짜)를 기준으로 삼음
-    target_date = momentum_scores.index[-1]
+    # target_date가 없으면 가장 마지막 인덱스를 사용
+    if target_date is None:
+        target_date = momentum_scores.index[-1]
+    
     scores = momentum_scores.loc[target_date]
 
     tip_score = scores.get("TIP", 0)
@@ -91,14 +96,26 @@ def run_screener(total_balance: float):
         # 4) TIP 기준 자산 선택 (offense/defense) 및 target_date 결정
         selected_assets, target_date = select_assets(momentum_scores, data)
 
-        # 5) 결과 요약 및 테이블 생성
+        # 5) 백테스트 실행
+        portfolio_value, rebalancing_history, performance_metrics = run_backtest(
+            data, momentum_scores, total_balance
+        )
+        
+        # 6) 최근 12개월 리밸런싱 내역
+        recent_rebalancing = get_recent_rebalancing_history(data, momentum_scores, months=12)
+
+        # 7) 결과 요약 및 테이블 생성
         return display_results(
             momentum_scores,
             data,
             selected_assets,
             tickers,
             total_balance,
-            target_date
+            target_date,
+            portfolio_value,
+            rebalancing_history,
+            performance_metrics,
+            recent_rebalancing
         )
 
 
@@ -108,7 +125,11 @@ def display_results(
     selected_assets: list,
     tickers: list,
     total_balance: float,
-    target_date: pd.Timestamp
+    target_date: pd.Timestamp,
+    portfolio_value: pd.Series = None,
+    rebalancing_history: list = None,
+    performance_metrics: dict = None,
+    recent_rebalancing: list = None
 ):
     """결과 표시 및 데이터 반환"""
     haa_bal = total_balance * 0.8
@@ -146,7 +167,11 @@ def display_results(
         "tickers": tickers,
         "selected_assets": selected_assets,
         "haa_bal": haa_bal,
-        "brk_shares": brk_shares
+        "brk_shares": brk_shares,
+        "portfolio_value": portfolio_value,
+        "rebalancing_history": rebalancing_history,
+        "performance_metrics": performance_metrics,
+        "recent_rebalancing": recent_rebalancing
     }
 
     # ==== 아래쪽: 전체 자산군 테이블 생성 ====
@@ -204,6 +229,174 @@ def display_results(
 
     result_data["df"] = df
     return result_data
+
+
+def run_backtest(data: pd.DataFrame, momentum_scores: pd.DataFrame, initial_balance: float = 10000.0):
+    """HAA 전략 백테스트 실행"""
+    # 월말 날짜 추출 (매월 마지막 거래일)
+    monthly_dates = data.resample('M').last().index
+    
+    # 최소 2개월 데이터 필요
+    if len(monthly_dates) < 2:
+        return None, None, None
+    
+    # 포트폴리오 가치 추적
+    portfolio_value = pd.Series(index=monthly_dates, dtype=float)
+    portfolio_value.iloc[0] = initial_balance
+    
+    # 리밸런싱 내역 저장
+    rebalancing_history = []
+    
+    # 각 월별로 리밸런싱 및 수익률 계산
+    for i in range(1, len(monthly_dates)):
+        current_date = monthly_dates[i]
+        prev_date = monthly_dates[i-1]
+        
+        # 이전 달 말에 선택된 자산 (리밸런싱 시점)
+        selected_assets, _ = select_assets(momentum_scores, data, prev_date)
+        
+        # HAA 80% + BRK-B 20% 구성
+        haa_weight = 0.8
+        brk_weight = 0.2
+        
+        # 각 자산의 월간 수익률 계산
+        monthly_returns = {}
+        haa_return = 0.0
+        
+        # HAA 자산들의 수익률 (균등 비중)
+        if selected_assets:
+            for asset, _ in selected_assets:
+                if asset in data.columns:
+                    prev_price = data.loc[prev_date, asset] if prev_date in data.index else None
+                    curr_price = data.loc[current_date, asset] if current_date in data.index else None
+                    if prev_price and curr_price and not pd.isna(prev_price) and not pd.isna(curr_price) and prev_price > 0:
+                        asset_return = (curr_price / prev_price) - 1
+                        monthly_returns[asset] = asset_return
+                        haa_return += asset_return / len(selected_assets)
+        
+        # BRK-B 수익률
+        brk_return = 0.0
+        if "BRK-B" in data.columns:
+            prev_price = data.loc[prev_date, "BRK-B"] if prev_date in data.index else None
+            curr_price = data.loc[current_date, "BRK-B"] if current_date in data.index else None
+            if prev_price and curr_price and not pd.isna(prev_price) and not pd.isna(curr_price) and prev_price > 0:
+                brk_return = (curr_price / prev_price) - 1
+        
+        # 포트폴리오 수익률 = HAA 80% + BRK-B 20%
+        portfolio_return = (haa_weight * haa_return) + (brk_weight * brk_return)
+        portfolio_value.iloc[i] = portfolio_value.iloc[i-1] * (1 + portfolio_return)
+        
+        # 리밸런싱 내역 저장
+        haa_assets = len(selected_assets)
+        if haa_assets > 0:
+            haa_weight_per_asset = 0.8 / haa_assets
+            asset_weights = []
+            for asset, _ in selected_assets:
+                asset_name = get_asset_full_name(asset)
+                asset_weights.append(f"{asset} - {asset_name} ({haa_weight_per_asset*100:.2f}%)")
+            asset_weights.append(f"BRK-B - Berkshire Hathaway Inc. Class B (20.00%)")
+            asset_str = ", ".join(asset_weights)
+        else:
+            asset_str = "BRK-B - Berkshire Hathaway Inc. Class B (20.00%)"
+        
+        rebalancing_history.append({
+            "적용 시점": current_date.strftime('%Y-%m-%d'),
+            "목표 자산 비중": asset_str
+        })
+    
+    # 성과 지표 계산
+    total_return = (portfolio_value.iloc[-1] / portfolio_value.iloc[0]) - 1
+    years = (monthly_dates[-1] - monthly_dates[0]).days / 365.25
+    cagr = ((portfolio_value.iloc[-1] / portfolio_value.iloc[0]) ** (1 / years)) - 1 if years > 0 else 0
+    
+    # 월별 수익률
+    monthly_returns_series = portfolio_value.pct_change().dropna()
+    volatility = monthly_returns_series.std() * np.sqrt(12)  # 연환산 변동성
+    
+    # 최대 낙폭 (MDD)
+    cumulative = (1 + monthly_returns_series).cumprod()
+    running_max = cumulative.expanding().max()
+    drawdown = (cumulative - running_max) / running_max
+    mdd = drawdown.min()
+    
+    # 샤프 비율 (무위험 수익률 0% 가정)
+    sharpe = (cagr / volatility) if volatility > 0 else 0
+    
+    performance_metrics = {
+        "총 수익률": f"{total_return*100:.2f}%",
+        "CAGR": f"{cagr*100:.2f}%",
+        "연환산 변동성": f"{volatility*100:.2f}%",
+        "샤프 비율": f"{sharpe:.2f}",
+        "최대 낙폭 (MDD)": f"{mdd*100:.2f}%",
+        "시작일": monthly_dates[0].strftime('%Y-%m-%d'),
+        "종료일": monthly_dates[-1].strftime('%Y-%m-%d'),
+        "기간 (년)": f"{years:.2f}"
+    }
+    
+    return portfolio_value, rebalancing_history, performance_metrics
+
+
+def get_asset_full_name(ticker: str) -> str:
+    """티커의 전체 이름 반환"""
+    asset_names = {
+        "SPY": "SPDR S&P 500 ETF Trust",
+        "VEA": "Vanguard FTSE Developed Markets ETF",
+        "VWO": "Vanguard FTSE Emerging Markets ETF",
+        "IWM": "iShares Russell 2000 ETF",
+        "TLT": "iShares 20+ Year Treasury Bond ETF",
+        "PDBC": "Invesco Optimum Yield Diversified Commodity Strategy No K-1 ETF",
+        "VNQ": "Vanguard Real Estate ETF",
+        "IEF": "iShares 7-10 Year Treasury Bond ETF",
+        "BIL": "SPDR Bloomberg 1-3 Month T-Bill ETF",
+        "TIP": "iShares TIPS Bond ETF",
+        "BRK-B": "Berkshire Hathaway Inc. Class B"
+    }
+    return asset_names.get(ticker, ticker)
+
+
+def get_recent_rebalancing_history(data: pd.DataFrame, momentum_scores: pd.DataFrame, months: int = 12):
+    """최근 N개월 리밸런싱 내역 추출"""
+    # 현재 날짜 기준으로 과거 N개월
+    end_date = pd.Timestamp.now().normalize()
+    start_date = end_date - pd.DateOffset(months=months)
+    
+    # 월말 날짜 추출
+    monthly_dates = data.resample('M').last().index
+    monthly_dates = monthly_dates[(monthly_dates >= start_date) & (monthly_dates <= end_date)]
+    
+    if len(monthly_dates) == 0:
+        return []
+    
+    rebalancing_history = []
+    
+    for date in monthly_dates:
+        if date not in momentum_scores.index:
+            continue
+            
+        selected_assets, _ = select_assets(momentum_scores, data, date)
+        
+        # 비중 계산 (HAA 자산들은 균등 분배, BRK-B는 20%)
+        haa_assets = len(selected_assets)
+        if haa_assets > 0:
+            haa_weight_per_asset = 0.8 / haa_assets
+            asset_weights = []
+            for asset, _ in selected_assets:
+                asset_name = get_asset_full_name(asset)
+                asset_weights.append(f"{asset} - {asset_name} ({haa_weight_per_asset*100:.2f}%)")
+            asset_weights.append(f"BRK-B - Berkshire Hathaway Inc. Class B (20.00%)")
+            asset_str = ", ".join(asset_weights)
+        else:
+            asset_str = "BRK-B - Berkshire Hathaway Inc. Class B (20.00%)"
+        
+        rebalancing_history.append({
+            "적용 시점": date.strftime('%Y-%m-%d'),
+            "목표 자산 비중": asset_str
+        })
+    
+    # 최신순으로 정렬
+    rebalancing_history.reverse()
+    
+    return rebalancing_history
 
 
 # ==== Streamlit 앱 메인 ====
@@ -299,6 +492,95 @@ if 'result_data' in st.session_state:
         file_name=f"haa_screener_{datetime.now().strftime('%Y%m%d')}.csv",
         mime="text/csv"
     )
+    
+    st.markdown("---")
+    
+    # ==== 백테스트 성과 지표 ====
+    if result_data.get('performance_metrics'):
+        st.subheader("📊 백테스트 성과 지표")
+        metrics = result_data['performance_metrics']
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("CAGR", metrics.get("CAGR", "N/A"))
+            st.metric("총 수익률", metrics.get("총 수익률", "N/A"))
+        with col2:
+            st.metric("연환산 변동성", metrics.get("연환산 변동성", "N/A"))
+            st.metric("샤프 비율", metrics.get("샤프 비율", "N/A"))
+        with col3:
+            st.metric("최대 낙폭 (MDD)", metrics.get("최대 낙폭 (MDD)", "N/A"))
+            st.metric("기간", metrics.get("기간 (년)", "N/A") + "년")
+        with col4:
+            st.metric("시작일", metrics.get("시작일", "N/A"))
+            st.metric("종료일", metrics.get("종료일", "N/A"))
+    
+    st.markdown("---")
+    
+    # ==== 최근 리밸런싱 및 리밸런싱 추이 ====
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        st.subheader("📊 최근 리밸런싱")
+        # 도넛 차트 생성
+        current_selected_assets = result_data.get('selected_assets', [])
+        if current_selected_assets:
+            asset_names = [asset for asset, _ in current_selected_assets]
+            asset_names.append("BRK-B")
+            
+            # 비중 계산
+            haa_assets = len(current_selected_assets)
+            if haa_assets > 0:
+                haa_weight_per_asset = 0.8 / haa_assets
+                values = [haa_weight_per_asset * 100] * haa_assets
+                labels = [asset for asset, _ in current_selected_assets]
+            else:
+                values = []
+                labels = []
+            
+            values.append(20.0)  # BRK-B 20%
+            labels.append("BRK-B")
+            
+            # 도넛 차트
+            fig = go.Figure(data=[go.Pie(
+                labels=labels,
+                values=values,
+                hole=0.5,
+                textinfo='label+percent',
+                textposition='outside'
+            )])
+            fig.update_layout(
+                height=400,
+                showlegend=True,
+                margin=dict(t=0, b=0, l=0, r=0)
+            )
+            st.plotly_chart(fig, use_container_width=True)
+    
+    with col2:
+        st.subheader("📈 리밸런싱 추이")
+        if result_data.get('recent_rebalancing'):
+            rebal_df = pd.DataFrame(result_data['recent_rebalancing'])
+            st.dataframe(
+                rebal_df,
+                use_container_width=True,
+                hide_index=True,
+                height=400
+            )
+        else:
+            st.info("리밸런싱 내역이 없습니다.")
+    
+    # ==== 백테스트 포트폴리오 가치 차트 ====
+    if result_data.get('portfolio_value') is not None:
+        st.markdown("---")
+        st.subheader("📈 백테스트 포트폴리오 가치 추이")
+        portfolio_df = result_data['portfolio_value'].to_frame("포트폴리오 가치")
+        fig = px.line(
+            portfolio_df,
+            x=portfolio_df.index,
+            y="포트폴리오 가치",
+            title="HAA 전략 백테스트 포트폴리오 가치",
+            labels={"value": "포트폴리오 가치 ($)", "index": "날짜"}
+        )
+        fig.update_layout(height=400)
+        st.plotly_chart(fig, use_container_width=True)
 else:
     st.info("👈 왼쪽 사이드바에서 보유 금액을 입력하고 '실행' 버튼을 클릭하세요.")
 
