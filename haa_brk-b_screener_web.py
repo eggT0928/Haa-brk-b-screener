@@ -914,16 +914,29 @@ if 'result_data' in st.session_state:
                             y_labels.append(str(idx))
                     y_positions.append(pos)
                 
-                # 색상 스케일 설정 (빨강 -> 흰색 -> 초록)
+                # 최소값과 최대값 계산 (NaN 제외)
+                z_min = np.nanmin(heatmap_data.values)
+                z_max = np.nanmax(heatmap_data.values)
+                
+                # 색상 스케일 설정: 음수는 빨강 계열, 양수는 초록 계열
+                # zmid를 0으로 설정하여 0을 기준으로 색상 분리
+                # plotly의 zmid 기능을 사용하면 0을 기준으로 대칭적으로 색상이 적용됨
                 fig = go.Figure(data=go.Heatmap(
                     z=heatmap_data.values,
                     x=heatmap_data.columns,
                     y=y_positions,
                     colorscale=[
-                        [0, '#d32f2f'],      # 빨강 (음수)
-                        [0.5, '#ffffff'],   # 흰색 (0)
-                        [1, '#2e7d32']      # 초록 (양수)
+                        [0.0, '#b71c1c'],      # 진한 빨강 (최소값)
+                        [0.2, '#d32f2f'],     # 빨강
+                        [0.4, '#ffcdd2'],     # 연한 빨강
+                        [0.5, '#ffffff'],     # 흰색 (0)
+                        [0.6, '#c8e6c9'],     # 연한 초록
+                        [0.8, '#2e7d32'],     # 초록
+                        [1.0, '#1b5e20']      # 진한 초록 (최대값)
                     ],
+                    zmid=0,  # 0을 중간값으로 설정하여 음수/양수 구분
+                    zmin=z_min,
+                    zmax=z_max,
                     text=[[f"{val:.1f}%" if not pd.isna(val) else "" for val in row] 
                           for row in heatmap_data.values],
                     texttemplate='%{text}',
@@ -951,18 +964,35 @@ if 'result_data' in st.session_state:
                 st.subheader("📊 월별 수익률 분포")
                 
                 dist_data = analysis['monthly_distribution']
+                total_count = dist_data['count'].sum()
+                
+                # 비율 계산
+                dist_data['percentage'] = (dist_data['count'] / total_count * 100) if total_count > 0 else 0
+                
+                # 색상 설정 (음수: 빨강, 양수: 초록)
+                colors = ['#d32f2f' if x < 0 else '#2e7d32' for x in dist_data['bin_center']]
+                
+                # X축 레이블 생성 (구간 표시: -10%, -8%, ...)
+                x_labels = [f"{int(bin_center)}%" for bin_center in dist_data['bin_center']]
+                
                 fig = go.Figure()
                 fig.add_trace(go.Bar(
-                    x=dist_data['bin_center'],
+                    x=x_labels,
                     y=dist_data['count'],
-                    marker_color='#2e7d32',
-                    name='빈도'
+                    marker_color=colors,
+                    name='빈도',
+                    text=[f"{pct:.1f}%" if count > 0 else "" for count, pct in zip(dist_data['count'], dist_data['percentage'])],
+                    textposition='outside',
+                    textfont={"size": 11},
+                    hovertemplate='수익률: %{x}<br>빈도: %{y}회<br>비율: %{customdata:.1f}%<extra></extra>',
+                    customdata=dist_data['percentage']
                 ))
                 fig.update_layout(
                     xaxis_title="수익률 (%)",
-                    yaxis_title="빈도",
+                    yaxis_title="빈도 (회)",
                     height=400,
-                    showlegend=False
+                    showlegend=False,
+                    hovermode='x unified'
                 )
                 st.plotly_chart(fig, use_container_width=True)
             
