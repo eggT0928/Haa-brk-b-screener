@@ -32,6 +32,15 @@ def select_assets(momentum_scores: pd.DataFrame, data: pd.DataFrame, target_date
     if target_date is None:
         target_date = momentum_scores.index[-1]
     
+    # target_date가 인덱스에 없으면 가장 가까운 이전 날짜를 찾음
+    if target_date not in momentum_scores.index:
+        available_dates = momentum_scores.index[momentum_scores.index <= target_date]
+        if len(available_dates) > 0:
+            target_date = available_dates[-1]
+        else:
+            # 사용 가능한 날짜가 없으면 첫 번째 날짜 사용
+            target_date = momentum_scores.index[0]
+    
     scores = momentum_scores.loc[target_date]
 
     tip_score = scores.get("TIP", 0)
@@ -233,107 +242,125 @@ def display_results(
 
 def run_backtest(data: pd.DataFrame, momentum_scores: pd.DataFrame, initial_balance: float = 10000.0):
     """HAA 전략 백테스트 실행"""
-    # 월말 날짜 추출 (매월 마지막 거래일)
-    monthly_dates = data.resample('M').last().index
-    
-    # 최소 2개월 데이터 필요
-    if len(monthly_dates) < 2:
-        return None, None, None
-    
-    # 포트폴리오 가치 추적
-    portfolio_value = pd.Series(index=monthly_dates, dtype=float)
-    portfolio_value.iloc[0] = initial_balance
-    
-    # 리밸런싱 내역 저장
-    rebalancing_history = []
-    
-    # 각 월별로 리밸런싱 및 수익률 계산
-    for i in range(1, len(monthly_dates)):
-        current_date = monthly_dates[i]
-        prev_date = monthly_dates[i-1]
+    try:
+        # 월말 날짜 추출 (매월 마지막 거래일)
+        monthly_dates = data.resample('M').last().index
         
-        # 이전 달 말에 선택된 자산 (리밸런싱 시점)
-        selected_assets, _ = select_assets(momentum_scores, data, prev_date)
+        # momentum_scores에 데이터가 있는 날짜만 필터링
+        # momentum_scores는 모멘텀 계산을 위해 최소 252일(12개월) 데이터가 필요하므로
+        # 첫 번째 날짜는 momentum_scores의 첫 번째 날짜 이후여야 함
+        if len(momentum_scores.index) > 0:
+            first_valid_date = momentum_scores.index[0]
+            monthly_dates = monthly_dates[monthly_dates >= first_valid_date]
         
-        # HAA 80% + BRK-B 20% 구성
-        haa_weight = 0.8
-        brk_weight = 0.2
+        # 최소 2개월 데이터 필요
+        if len(monthly_dates) < 2:
+            return None, None, None
         
-        # 각 자산의 월간 수익률 계산
-        monthly_returns = {}
-        haa_return = 0.0
-        
-        # HAA 자산들의 수익률 (균등 비중)
-        if selected_assets:
-            for asset, _ in selected_assets:
-                if asset in data.columns:
-                    prev_price = data.loc[prev_date, asset] if prev_date in data.index else None
-                    curr_price = data.loc[current_date, asset] if current_date in data.index else None
-                    if prev_price and curr_price and not pd.isna(prev_price) and not pd.isna(curr_price) and prev_price > 0:
-                        asset_return = (curr_price / prev_price) - 1
-                        monthly_returns[asset] = asset_return
-                        haa_return += asset_return / len(selected_assets)
-        
-        # BRK-B 수익률
-        brk_return = 0.0
-        if "BRK-B" in data.columns:
-            prev_price = data.loc[prev_date, "BRK-B"] if prev_date in data.index else None
-            curr_price = data.loc[current_date, "BRK-B"] if current_date in data.index else None
-            if prev_price and curr_price and not pd.isna(prev_price) and not pd.isna(curr_price) and prev_price > 0:
-                brk_return = (curr_price / prev_price) - 1
-        
-        # 포트폴리오 수익률 = HAA 80% + BRK-B 20%
-        portfolio_return = (haa_weight * haa_return) + (brk_weight * brk_return)
-        portfolio_value.iloc[i] = portfolio_value.iloc[i-1] * (1 + portfolio_return)
+        # 포트폴리오 가치 추적
+        portfolio_value = pd.Series(index=monthly_dates, dtype=float)
+        portfolio_value.iloc[0] = initial_balance
         
         # 리밸런싱 내역 저장
-        haa_assets = len(selected_assets)
-        if haa_assets > 0:
-            haa_weight_per_asset = 0.8 / haa_assets
-            asset_weights = []
-            for asset, _ in selected_assets:
-                asset_name = get_asset_full_name(asset)
-                asset_weights.append(f"{asset} - {asset_name} ({haa_weight_per_asset*100:.2f}%)")
-            asset_weights.append(f"BRK-B - Berkshire Hathaway Inc. Class B (20.00%)")
-            asset_str = ", ".join(asset_weights)
-        else:
-            asset_str = "BRK-B - Berkshire Hathaway Inc. Class B (20.00%)"
+        rebalancing_history = []
         
-        rebalancing_history.append({
-            "적용 시점": current_date.strftime('%Y-%m-%d'),
-            "목표 자산 비중": asset_str
-        })
-    
-    # 성과 지표 계산
-    total_return = (portfolio_value.iloc[-1] / portfolio_value.iloc[0]) - 1
-    years = (monthly_dates[-1] - monthly_dates[0]).days / 365.25
-    cagr = ((portfolio_value.iloc[-1] / portfolio_value.iloc[0]) ** (1 / years)) - 1 if years > 0 else 0
-    
-    # 월별 수익률
-    monthly_returns_series = portfolio_value.pct_change().dropna()
-    volatility = monthly_returns_series.std() * np.sqrt(12)  # 연환산 변동성
-    
-    # 최대 낙폭 (MDD)
-    cumulative = (1 + monthly_returns_series).cumprod()
-    running_max = cumulative.expanding().max()
-    drawdown = (cumulative - running_max) / running_max
-    mdd = drawdown.min()
-    
-    # 샤프 비율 (무위험 수익률 0% 가정)
-    sharpe = (cagr / volatility) if volatility > 0 else 0
-    
-    performance_metrics = {
-        "총 수익률": f"{total_return*100:.2f}%",
-        "CAGR": f"{cagr*100:.2f}%",
-        "연환산 변동성": f"{volatility*100:.2f}%",
-        "샤프 비율": f"{sharpe:.2f}",
-        "최대 낙폭 (MDD)": f"{mdd*100:.2f}%",
-        "시작일": monthly_dates[0].strftime('%Y-%m-%d'),
-        "종료일": monthly_dates[-1].strftime('%Y-%m-%d'),
-        "기간 (년)": f"{years:.2f}"
-    }
-    
-    return portfolio_value, rebalancing_history, performance_metrics
+        # 각 월별로 리밸런싱 및 수익률 계산
+        for i in range(1, len(monthly_dates)):
+            current_date = monthly_dates[i]
+            prev_date = monthly_dates[i-1]
+            
+            # 이전 달 말에 선택된 자산 (리밸런싱 시점)
+            try:
+                selected_assets, _ = select_assets(momentum_scores, data, prev_date)
+            except Exception as e:
+                # 자산 선택 실패 시 이전 자산 유지 또는 스킵
+                st.warning(f"날짜 {prev_date}에서 자산 선택 실패: {e}")
+                continue
+            
+            # HAA 80% + BRK-B 20% 구성
+            haa_weight = 0.8
+            brk_weight = 0.2
+            
+            # 각 자산의 월간 수익률 계산
+            monthly_returns = {}
+            haa_return = 0.0
+            
+            # HAA 자산들의 수익률 (균등 비중)
+            if selected_assets:
+                for asset, _ in selected_assets:
+                    if asset in data.columns:
+                        prev_price = data.loc[prev_date, asset] if prev_date in data.index else None
+                        curr_price = data.loc[current_date, asset] if current_date in data.index else None
+                        if prev_price and curr_price and not pd.isna(prev_price) and not pd.isna(curr_price) and prev_price > 0:
+                            asset_return = (curr_price / prev_price) - 1
+                            monthly_returns[asset] = asset_return
+                            haa_return += asset_return / len(selected_assets)
+            
+            # BRK-B 수익률
+            brk_return = 0.0
+            if "BRK-B" in data.columns:
+                prev_price = data.loc[prev_date, "BRK-B"] if prev_date in data.index else None
+                curr_price = data.loc[current_date, "BRK-B"] if current_date in data.index else None
+                if prev_price and curr_price and not pd.isna(prev_price) and not pd.isna(curr_price) and prev_price > 0:
+                    brk_return = (curr_price / prev_price) - 1
+            
+            # 포트폴리오 수익률 = HAA 80% + BRK-B 20%
+            portfolio_return = (haa_weight * haa_return) + (brk_weight * brk_return)
+            portfolio_value.iloc[i] = portfolio_value.iloc[i-1] * (1 + portfolio_return)
+            
+            # 리밸런싱 내역 저장
+            haa_assets = len(selected_assets)
+            if haa_assets > 0:
+                haa_weight_per_asset = 0.8 / haa_assets
+                asset_weights = []
+                for asset, _ in selected_assets:
+                    asset_name = get_asset_full_name(asset)
+                    asset_weights.append(f"{asset} - {asset_name} ({haa_weight_per_asset*100:.2f}%)")
+                asset_weights.append(f"BRK-B - Berkshire Hathaway Inc. Class B (20.00%)")
+                asset_str = ", ".join(asset_weights)
+            else:
+                asset_str = "BRK-B - Berkshire Hathaway Inc. Class B (20.00%)"
+            
+            rebalancing_history.append({
+                "적용 시점": current_date.strftime('%Y-%m-%d'),
+                "목표 자산 비중": asset_str
+            })
+        
+        # 성과 지표 계산
+        total_return = (portfolio_value.iloc[-1] / portfolio_value.iloc[0]) - 1
+        years = (monthly_dates[-1] - monthly_dates[0]).days / 365.25
+        cagr = ((portfolio_value.iloc[-1] / portfolio_value.iloc[0]) ** (1 / years)) - 1 if years > 0 else 0
+        
+        # 월별 수익률
+        monthly_returns_series = portfolio_value.pct_change().dropna()
+        volatility = monthly_returns_series.std() * np.sqrt(12)  # 연환산 변동성
+        
+        # 최대 낙폭 (MDD)
+        cumulative = (1 + monthly_returns_series).cumprod()
+        running_max = cumulative.expanding().max()
+        drawdown = (cumulative - running_max) / running_max
+        mdd = drawdown.min()
+        
+        # 샤프 비율 (무위험 수익률 0% 가정)
+        sharpe = (cagr / volatility) if volatility > 0 else 0
+        
+        performance_metrics = {
+            "총 수익률": f"{total_return*100:.2f}%",
+            "CAGR": f"{cagr*100:.2f}%",
+            "연환산 변동성": f"{volatility*100:.2f}%",
+            "샤프 비율": f"{sharpe:.2f}",
+            "최대 낙폭 (MDD)": f"{mdd*100:.2f}%",
+            "시작일": monthly_dates[0].strftime('%Y-%m-%d'),
+            "종료일": monthly_dates[-1].strftime('%Y-%m-%d'),
+            "기간 (년)": f"{years:.2f}"
+        }
+        
+        return portfolio_value, rebalancing_history, performance_metrics
+    except Exception as e:
+        st.error(f"백테스트 실행 중 오류 발생: {e}")
+        import traceback
+        st.error(traceback.format_exc())
+        return None, None, None
 
 
 def get_asset_full_name(ticker: str) -> str:
