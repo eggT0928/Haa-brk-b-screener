@@ -308,18 +308,18 @@ def run_backtest(data: pd.DataFrame, momentum_scores: pd.DataFrame, initial_bala
             portfolio_return = (haa_weight * haa_return) + (brk_weight * brk_return)
             portfolio_value.iloc[i] = portfolio_value.iloc[i-1] * (1 + portfolio_return)
             
-            # 리밸런싱 내역 저장
+            # 리밸런싱 내역 저장 (간단한 형식)
             haa_assets = len(selected_assets)
             if haa_assets > 0:
                 haa_weight_per_asset = 0.8 / haa_assets
                 asset_weights = []
-                for asset, _ in selected_assets:
-                    asset_name = get_asset_full_name(asset)
-                    asset_weights.append(f"{asset} - {asset_name} ({haa_weight_per_asset*100:.2f}%)")
-                asset_weights.append(f"BRK-B - Berkshire Hathaway Inc. Class B (20.00%)")
+                # selected_assets는 이미 모멘텀 점수 순서대로 정렬되어 있음
+                for rank, (asset, score) in enumerate(selected_assets, 1):
+                    asset_weights.append(f"{asset}({haa_weight_per_asset*100:.0f}% {rank}위)")
+                asset_weights.append(f"BRK-B(20% 보유)")
                 asset_str = ", ".join(asset_weights)
             else:
-                asset_str = "BRK-B - Berkshire Hathaway Inc. Class B (20.00%)"
+                asset_str = "BRK-B(20% 보유)"
             
             rebalancing_history.append({
                 "적용 시점": current_date.strftime('%Y-%m-%d'),
@@ -329,11 +329,21 @@ def run_backtest(data: pd.DataFrame, momentum_scores: pd.DataFrame, initial_bala
         # 성과 지표 계산
         total_return = (portfolio_value.iloc[-1] / portfolio_value.iloc[0]) - 1
         years = (monthly_dates[-1] - monthly_dates[0]).days / 365.25
-        cagr = ((portfolio_value.iloc[-1] / portfolio_value.iloc[0]) ** (1 / years)) - 1 if years > 0 else 0
         
-        # 월별 수익률
+        # CAGR 계산: (최종값/초기값)^(1/년수) - 1
+        if years > 0 and portfolio_value.iloc[0] > 0:
+            cagr = ((portfolio_value.iloc[-1] / portfolio_value.iloc[0]) ** (1 / years)) - 1
+        else:
+            cagr = 0
+        
+        # 월별 수익률 계산
         monthly_returns_series = portfolio_value.pct_change().dropna()
-        volatility = monthly_returns_series.std() * np.sqrt(12)  # 연환산 변동성
+        
+        # 연환산 변동성: 월별 수익률의 표준편차 * sqrt(12)
+        if len(monthly_returns_series) > 1:
+            volatility = monthly_returns_series.std() * np.sqrt(12)
+        else:
+            volatility = 0
         
         # 최대 낙폭 (MDD)
         cumulative = (1 + monthly_returns_series).cumprod()
@@ -383,7 +393,7 @@ def get_asset_full_name(ticker: str) -> str:
 
 def get_recent_rebalancing_history(data: pd.DataFrame, momentum_scores: pd.DataFrame, months: int = 12):
     """최근 N개월 리밸런싱 내역 추출"""
-    # 현재 날짜 기준으로 과거 N개월
+    # 현재 날짜 기준으로 과거 N개월 (현재 월 포함)
     end_date = pd.Timestamp.now().normalize()
     start_date = end_date - pd.DateOffset(months=months)
     
@@ -391,29 +401,40 @@ def get_recent_rebalancing_history(data: pd.DataFrame, momentum_scores: pd.DataF
     monthly_dates = data.resample('M').last().index
     monthly_dates = monthly_dates[(monthly_dates >= start_date) & (monthly_dates <= end_date)]
     
+    # 현재 날짜가 포함된 월의 마지막 거래일도 추가
+    current_month_end = data.resample('M').last().index[-1] if len(data) > 0 else None
+    if current_month_end and current_month_end not in monthly_dates and current_month_end >= start_date:
+        monthly_dates = pd.Index(list(monthly_dates) + [current_month_end]).sort_values()
+    
     if len(monthly_dates) == 0:
         return []
     
     rebalancing_history = []
     
     for date in monthly_dates:
-        if date not in momentum_scores.index:
-            continue
+        # momentum_scores에 없으면 가장 가까운 이전 날짜 사용
+        target_date = date
+        if target_date not in momentum_scores.index:
+            available_dates = momentum_scores.index[momentum_scores.index <= target_date]
+            if len(available_dates) > 0:
+                target_date = available_dates[-1]
+            else:
+                continue
             
-        selected_assets, _ = select_assets(momentum_scores, data, date)
+        selected_assets, _ = select_assets(momentum_scores, data, target_date)
         
-        # 비중 계산 (HAA 자산들은 균등 분배, BRK-B는 20%)
+        # 비중 계산 및 순위 표시 (모멘텀 점수 순서대로)
         haa_assets = len(selected_assets)
         if haa_assets > 0:
             haa_weight_per_asset = 0.8 / haa_assets
             asset_weights = []
-            for asset, _ in selected_assets:
-                asset_name = get_asset_full_name(asset)
-                asset_weights.append(f"{asset} - {asset_name} ({haa_weight_per_asset*100:.2f}%)")
-            asset_weights.append(f"BRK-B - Berkshire Hathaway Inc. Class B (20.00%)")
+            # selected_assets는 이미 모멘텀 점수 순서대로 정렬되어 있음
+            for rank, (asset, score) in enumerate(selected_assets, 1):
+                asset_weights.append(f"{asset}({haa_weight_per_asset*100:.0f}% {rank}위)")
+            asset_weights.append(f"BRK-B(20% 보유)")
             asset_str = ", ".join(asset_weights)
         else:
-            asset_str = "BRK-B - Berkshire Hathaway Inc. Class B (20.00%)"
+            asset_str = "BRK-B(20% 보유)"
         
         rebalancing_history.append({
             "적용 시점": date.strftime('%Y-%m-%d'),
