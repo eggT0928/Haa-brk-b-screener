@@ -893,14 +893,24 @@ if 'result_data' in st.session_state:
                     marker_color=colors,
                     text=[f"{x:.1f}%" for x in yearly_df['수익률']],
                     textposition='outside',
+                    textfont={"size": 13, "color": "black", "family": "Arial Black"},
                     name='연도별 수익률'
                 ))
                 fig.update_layout(
-                    xaxis_title="연도",
-                    yaxis_title="수익률 (%)",
-                    height=400,
+                    xaxis_title=dict(text="연도", font=dict(size=14, color="black")),
+                    yaxis_title=dict(text="수익률 (%)", font=dict(size=14, color="black")),
+                    height=450,
                     showlegend=False,
-                    hovermode='x unified'
+                    hovermode='x unified',
+                    xaxis=dict(
+                        tickfont={"size": 12, "color": "black"},
+                        title_font={"size": 14, "color": "black"}
+                    ),
+                    yaxis=dict(
+                        tickfont={"size": 12, "color": "black"},
+                        title_font={"size": 14, "color": "black"}
+                    ),
+                    margin=dict(b=60, t=80, l=60, r=40)  # 상하좌우 여백 증가 (텍스트가 잘리지 않도록)
                 )
                 st.plotly_chart(fig, use_container_width=True)
             
@@ -973,9 +983,9 @@ if 'result_data' in st.session_state:
                     text=[[f"<b>{val:.1f}%</b>" if not pd.isna(val) else "" for val in row] 
                           for row in heatmap_data.values],
                     texttemplate='%{text}',
-                    textfont={"size": 15, "color": "black"},
+                    textfont={"size": 16, "color": "black", "family": "Arial Black"},
                     colorbar=dict(
-                        title="수익률 (%)",
+                        title=dict(text="수익률 (%)", font=dict(size=13, color="black")),
                         tickmode='array',
                         tickvals=[0.0, 0.25, 0.5, 0.75, 1.0],
                         ticktext=[
@@ -984,21 +994,30 @@ if 'result_data' in st.session_state:
                             "0%",
                             f"{z_max/2:.1f}%" if z_max > 0 else "0%",
                             f"{z_max:.1f}%" if z_max > 0 else "0%"
-                        ]
+                        ],
+                        tickfont={"size": 11, "color": "black"}
                     ),
-                    ygap=2
+                    ygap=2,
+                    xgap=2
                 ))
                 fig.update_layout(
-                    height=400 + len(heatmap_data) * 30,
-                    xaxis_title="월",
-                    yaxis_title="연도",
+                    height=450 + len(heatmap_data) * 30,
+                    xaxis_title=dict(text="월", font=dict(size=14, color="black")),
+                    yaxis_title=dict(text="연도", font=dict(size=14, color="black")),
+                    xaxis=dict(
+                        tickfont={"size": 12, "color": "black"},
+                        title_font={"size": 14, "color": "black"}
+                    ),
                     yaxis=dict(
                         autorange='reversed',
                         tickmode='array',
                         tickvals=y_positions,
                         ticktext=y_labels,
+                        tickfont={"size": 12, "color": "black"},
+                        title_font={"size": 14, "color": "black"},
                         dtick=None
-                    )
+                    ),
+                    margin=dict(b=60, t=60, l=80, r=80)  # 상하좌우 여백 증가 (텍스트가 잘리지 않도록)
                 )
                 st.plotly_chart(fig, use_container_width=True)
             
@@ -1027,14 +1046,14 @@ if 'result_data' in st.session_state:
                     name='빈도',
                     text=[f"{pct:.1f}%" if count > 0 else "" for count, pct in zip(dist_data['count'], dist_data['percentage'])],
                     textposition='outside',
-                    textfont={"size": 11},
+                    textfont={"size": 13, "color": "black", "family": "Arial Black"},
                     hovertemplate='구간: %{x}<br>빈도: %{y}회<br>비율: %{customdata:.1f}%<extra></extra>',
                     customdata=dist_data['percentage']
                 ))
                 fig.update_layout(
-                    xaxis_title="수익률 구간 (%)",
-                    yaxis_title="빈도 (회)",
-                    height=450,
+                    xaxis_title=dict(text="수익률 구간 (%)", font=dict(size=14, color="black")),
+                    yaxis_title=dict(text="빈도 (회)", font=dict(size=14, color="black")),
+                    height=550,
                     showlegend=False,
                     hovermode='x unified',
                     xaxis=dict(
@@ -1042,9 +1061,14 @@ if 'result_data' in st.session_state:
                         tickvals=x_labels,
                         ticktext=x_labels,
                         tickangle=-45,  # 레이블 회전
-                        tickfont={"size": 9}  # X축 레이블 크기
+                        tickfont={"size": 11, "color": "black"},  # X축 레이블 크기 및 색상
+                        title_font={"size": 14, "color": "black"}
                     ),
-                    margin=dict(b=100)  # 하단 여백 증가 (회전된 레이블을 위해)
+                    yaxis=dict(
+                        tickfont={"size": 12, "color": "black"},  # Y축 레이블 크기 및 색상
+                        title_font={"size": 14, "color": "black"}
+                    ),
+                    margin=dict(b=120, t=80, l=60, r=40)  # 상하좌우 여백 증가 (텍스트가 잘리지 않도록)
                 )
                 st.plotly_chart(fig, use_container_width=True)
             
@@ -1084,13 +1108,52 @@ if 'result_data' in st.session_state:
                 st.markdown("---")
                 st.subheader("📋 포트폴리오 드로우다운")
                 
+                # portfolio_value를 가져와서 회복시점 계산에 사용
+                portfolio_value = result_data.get('portfolio_value')
+                
                 events = analysis['drawdown_events'][:10]  # 상위 10개만
                 events_data = []
                 for i, event in enumerate(events, 1):
+                    start_date = event['start']
+                    trough_date = event['trough']
+                    end_date = event['end']
+                    
+                    # 회복시점: start 이전의 최고점을 다시 회복한 시점
+                    recovery_point = None
+                    if portfolio_value is not None and start_date in portfolio_value.index:
+                        # start 이전의 최고점 찾기
+                        peak_value = portfolio_value.loc[:start_date].max()
+                        peak_date = portfolio_value.loc[:start_date].idxmax()
+                        
+                        # end 이후에 peak_value를 다시 회복한 첫 번째 시점 찾기
+                        if end_date < portfolio_value.index[-1]:
+                            recovery_candidates = portfolio_value.loc[end_date:]
+                            recovery_mask = recovery_candidates >= peak_value
+                            if recovery_mask.any():
+                                recovery_point = recovery_mask.idxmax()
+                            else:
+                                # 아직 회복하지 못한 경우
+                                recovery_point = None
+                        else:
+                            # 진행 중인 드로우다운
+                            recovery_point = None
+                    
+                    # 회복기간: trough부터 recovery_point까지의 기간 (개월)
+                    if recovery_point is not None and recovery_point > trough_date:
+                        recovery_months = (recovery_point.year - trough_date.year) * 12 + (recovery_point.month - trough_date.month)
+                    else:
+                        recovery_months = None
+                    
+                    # 손실기간: start부터 end까지의 기간 (개월)
+                    loss_months = (end_date.year - start_date.year) * 12 + (end_date.month - start_date.month)
+                    
                     events_data.append({
                         '순위': i,
-                        '시작': event['start'].strftime('%Y/%m'),
-                        '종료': event['end'].strftime('%Y/%m'),
+                        '시작': start_date.strftime('%Y/%m'),
+                        '종료': end_date.strftime('%Y/%m'),
+                        '회복시점': recovery_point.strftime('%Y/%m') if recovery_point is not None else '-',
+                        '회복기간': f"{recovery_months} 개월" if recovery_months is not None else '-',
+                        '손실기간': f"{loss_months} 개월",
                         '드로우다운': f"{event['drawdown']:.1f}%"
                     })
                 
