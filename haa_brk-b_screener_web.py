@@ -246,19 +246,22 @@ def display_results(
 def run_backtest(data: pd.DataFrame, momentum_scores: pd.DataFrame, initial_balance: float = 10000.0):
     """HAA 전략 백테스트 실행"""
     try:
-        # 월말 날짜 추출 (매월 마지막 거래일)
-        monthly_dates = data.resample('M').last().index
-        
         # momentum_scores에 데이터가 있는 날짜만 필터링
         # momentum_scores는 모멘텀 계산을 위해 최소 252일(12개월) 데이터가 필요하므로
         # 첫 번째 날짜는 momentum_scores의 첫 번째 날짜 이후여야 함
         if len(momentum_scores.index) > 0:
             first_valid_date = momentum_scores.index[0]
-            monthly_dates = monthly_dates[monthly_dates >= first_valid_date]
+            # first_valid_date 이후의 데이터만 사용
+            data_filtered = data[data.index >= first_valid_date].copy()
+        else:
+            data_filtered = data.copy()
+        
+        # 월말 날짜 추출 (매월 마지막 거래일)
+        monthly_dates = data_filtered.resample('M').last().index
         
         # 최소 2개월 데이터 필요
         if len(monthly_dates) < 2:
-            return None, None, None
+            return None, None, None, None
         
         # 포트폴리오 가치 추적
         portfolio_value = pd.Series(index=monthly_dates, dtype=float)
@@ -273,8 +276,9 @@ def run_backtest(data: pd.DataFrame, momentum_scores: pd.DataFrame, initial_bala
             prev_date = monthly_dates[i-1]
             
             # 이전 달 말에 선택된 자산 (리밸런싱 시점)
+            # 리밸런싱은 prev_date에 이루어지고, prev_date부터 current_date까지 보유
             try:
-                selected_assets, _ = select_assets(momentum_scores, data, prev_date)
+                selected_assets, _ = select_assets(momentum_scores, data_filtered, prev_date)
             except Exception as e:
                 # 자산 선택 실패 시 이전 자산 유지 또는 스킵
                 st.warning(f"날짜 {prev_date}에서 자산 선택 실패: {e}")
@@ -284,32 +288,50 @@ def run_backtest(data: pd.DataFrame, momentum_scores: pd.DataFrame, initial_bala
             haa_weight = 0.8
             brk_weight = 0.2
             
-            # 각 자산의 월간 수익률 계산
-            monthly_returns = {}
+            # 각 자산의 월간 수익률 계산 (prev_date부터 current_date까지)
             haa_return = 0.0
+            haa_count = 0
             
             # HAA 자산들의 수익률 (균등 비중)
             if selected_assets:
                 for asset, _ in selected_assets:
-                    if asset in data.columns:
-                        prev_price = data.loc[prev_date, asset] if prev_date in data.index else None
-                        curr_price = data.loc[current_date, asset] if current_date in data.index else None
-                        if prev_price and curr_price and not pd.isna(prev_price) and not pd.isna(curr_price) and prev_price > 0:
-                            asset_return = (curr_price / prev_price) - 1
-                            monthly_returns[asset] = asset_return
-                            haa_return += asset_return / len(selected_assets)
+                    if asset in data_filtered.columns:
+                        # prev_date와 current_date의 가격 확인
+                        if prev_date in data_filtered.index and current_date in data_filtered.index:
+                            prev_price = data_filtered.loc[prev_date, asset]
+                            curr_price = data_filtered.loc[current_date, asset]
+                            if not pd.isna(prev_price) and not pd.isna(curr_price) and prev_price > 0:
+                                asset_return = (curr_price / prev_price) - 1
+                                haa_return += asset_return
+                                haa_count += 1
+            
+            # HAA 평균 수익률 계산 (데이터가 있는 자산만)
+            if haa_count > 0:
+                haa_return = haa_return / haa_count
+            else:
+                haa_return = 0.0
             
             # BRK-B 수익률
             brk_return = 0.0
-            if "BRK-B" in data.columns:
-                prev_price = data.loc[prev_date, "BRK-B"] if prev_date in data.index else None
-                curr_price = data.loc[current_date, "BRK-B"] if current_date in data.index else None
-                if prev_price and curr_price and not pd.isna(prev_price) and not pd.isna(curr_price) and prev_price > 0:
-                    brk_return = (curr_price / prev_price) - 1
+            if "BRK-B" in data_filtered.columns:
+                if prev_date in data_filtered.index and current_date in data_filtered.index:
+                    prev_price = data_filtered.loc[prev_date, "BRK-B"]
+                    curr_price = data_filtered.loc[current_date, "BRK-B"]
+                    if not pd.isna(prev_price) and not pd.isna(curr_price) and prev_price > 0:
+                        brk_return = (curr_price / prev_price) - 1
             
             # 포트폴리오 수익률 = HAA 80% + BRK-B 20%
             portfolio_return = (haa_weight * haa_return) + (brk_weight * brk_return)
-            portfolio_value.iloc[i] = portfolio_value.iloc[i-1] * (1 + portfolio_return)
+            
+            # 포트폴리오 가치 업데이트 (복리 계산)
+            if portfolio_value.iloc[i-1] > 0:
+                portfolio_value.iloc[i] = portfolio_value.iloc[i-1] * (1 + portfolio_return)
+            else:
+                portfolio_value.iloc[i] = portfolio_value.iloc[i-1]
+            
+            # 디버깅: 월별 수익률이 0이거나 이상한 경우 확인
+            if abs(portfolio_return) > 0.5:  # 50% 이상 수익률은 이상함
+                st.warning(f"⚠️ {current_date.strftime('%Y-%m')}: 포트폴리오 수익률 {portfolio_return*100:.2f}% (HAA: {haa_return*100:.2f}%, BRK-B: {brk_return*100:.2f}%)")
             
             # 리밸런싱 내역 저장 (간단한 형식)
             haa_assets = len(selected_assets)
@@ -330,14 +352,40 @@ def run_backtest(data: pd.DataFrame, momentum_scores: pd.DataFrame, initial_bala
             })
         
         # 성과 지표 계산
-        total_return = (portfolio_value.iloc[-1] / portfolio_value.iloc[0]) - 1
-        years = (monthly_dates[-1] - monthly_dates[0]).days / 365.25
+        initial_value = portfolio_value.iloc[0]
+        final_value = portfolio_value.iloc[-1]
+        total_return = (final_value / initial_value) - 1
+        
+        # 기간 계산 (정확한 연수)
+        start_date = monthly_dates[0]
+        end_date = monthly_dates[-1]
+        days_diff = (end_date - start_date).days
+        years = days_diff / 365.25
         
         # CAGR 계산: (최종값/초기값)^(1/년수) - 1
-        if years > 0 and portfolio_value.iloc[0] > 0:
-            cagr = ((portfolio_value.iloc[-1] / portfolio_value.iloc[0]) ** (1 / years)) - 1
+        if years > 0 and initial_value > 0:
+            # 복리 수익률 계산
+            cagr = ((final_value / initial_value) ** (1 / years)) - 1
         else:
             cagr = 0
+        
+        # 검증: 월별 수익률로부터 CAGR 재계산
+        monthly_returns_series = portfolio_value.pct_change().dropna()
+        if len(monthly_returns_series) > 0:
+            # 월별 수익률의 기하평균을 연환산
+            # (1 + r1) * (1 + r2) * ... * (1 + rn) = 최종값/초기값
+            # 월별 기하평균 = (최종값/초기값)^(1/n) - 1
+            # 연환산 CAGR = (1 + 월별기하평균)^12 - 1
+            total_return_from_monthly = (1 + monthly_returns_series).prod() - 1
+            monthly_geometric_mean = (1 + monthly_returns_series).prod() ** (1 / len(monthly_returns_series)) - 1
+            cagr_from_monthly = ((1 + monthly_geometric_mean) ** 12) - 1
+            
+            # 디버깅 정보 (필요시 주석 해제)
+            # st.info(f"디버깅: 월별 수익률 개수={len(monthly_returns_series)}, 총 수익률(월별)={total_return_from_monthly*100:.2f}%, CAGR(월별)={cagr_from_monthly*100:.2f}%")
+            
+            # 두 방법의 차이가 크면 경고
+            if abs(cagr - cagr_from_monthly) > 0.01:  # 1% 이상 차이
+                st.warning(f"⚠️ CAGR 계산 검증: 직접 계산={cagr*100:.2f}%, 월별 기하평균={cagr_from_monthly*100:.2f}%")
         
         # 월별 수익률 계산
         monthly_returns_series = portfolio_value.pct_change().dropna()
