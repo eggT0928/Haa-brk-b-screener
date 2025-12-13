@@ -1127,13 +1127,13 @@ if 'result_data' in st.session_state:
                         
                         # end 이후에 peak_value를 다시 회복한 첫 번째 시점 찾기
                         if end_date < portfolio_value.index[-1]:
-                            recovery_candidates = portfolio_value.loc[end_date:]
-                            recovery_mask = recovery_candidates >= peak_value
-                            if recovery_mask.any():
-                                recovery_point = recovery_mask.idxmax()
-                            else:
-                                # 아직 회복하지 못한 경우
-                                recovery_point = None
+                            # end_date 이후의 모든 날짜 확인
+                            future_dates = portfolio_value.index[portfolio_value.index > end_date]
+                            
+                            for date in future_dates:
+                                if portfolio_value.loc[date] >= peak_value:
+                                    recovery_point = date
+                                    break
                         else:
                             # 진행 중인 드로우다운
                             recovery_point = None
