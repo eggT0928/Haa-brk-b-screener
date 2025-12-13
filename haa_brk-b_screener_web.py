@@ -106,7 +106,7 @@ def run_screener(total_balance: float):
         selected_assets, target_date = select_assets(momentum_scores, data)
 
         # 5) 백테스트 실행
-        portfolio_value, rebalancing_history, performance_metrics = run_backtest(
+        portfolio_value, rebalancing_history, performance_metrics, analysis_data = run_backtest(
             data, momentum_scores, total_balance
         )
         
@@ -124,7 +124,8 @@ def run_screener(total_balance: float):
             portfolio_value,
             rebalancing_history,
             performance_metrics,
-            recent_rebalancing
+            recent_rebalancing,
+            analysis_data
         )
 
 
@@ -138,7 +139,8 @@ def display_results(
     portfolio_value: pd.Series = None,
     rebalancing_history: list = None,
     performance_metrics: dict = None,
-    recent_rebalancing: list = None
+    recent_rebalancing: list = None,
+    analysis_data: dict = None
 ):
     """결과 표시 및 데이터 반환"""
     haa_bal = total_balance * 0.8
@@ -180,7 +182,8 @@ def display_results(
         "portfolio_value": portfolio_value,
         "rebalancing_history": rebalancing_history,
         "performance_metrics": performance_metrics,
-        "recent_rebalancing": recent_rebalancing
+        "recent_rebalancing": recent_rebalancing,
+        "analysis_data": analysis_data
     }
 
     # ==== 아래쪽: 전체 자산군 테이블 생성 ====
@@ -365,12 +368,169 @@ def run_backtest(data: pd.DataFrame, momentum_scores: pd.DataFrame, initial_bala
             "기간 (년)": f"{years:.2f}"
         }
         
-        return portfolio_value, rebalancing_history, performance_metrics
+        # 추가 분석 데이터 계산
+        yearly_returns = calculate_yearly_returns(portfolio_value)
+        monthly_returns = calculate_monthly_returns(portfolio_value)
+        monthly_heatmap = create_monthly_heatmap_data(monthly_returns)
+        drawdown_series, drawdown_events = calculate_drawdown_events(portfolio_value)
+        monthly_distribution = create_monthly_distribution(monthly_returns)
+        
+        return portfolio_value, rebalancing_history, performance_metrics, {
+            'yearly_returns': yearly_returns,
+            'monthly_returns': monthly_returns,
+            'monthly_heatmap': monthly_heatmap,
+            'drawdown_series': drawdown_series,
+            'drawdown_events': drawdown_events,
+            'monthly_distribution': monthly_distribution
+        }
     except Exception as e:
         st.error(f"백테스트 실행 중 오류 발생: {e}")
         import traceback
         st.error(traceback.format_exc())
-        return None, None, None
+        return None, None, None, None
+
+
+def calculate_yearly_returns(portfolio_value):
+    """연도별 수익률 계산"""
+    if portfolio_value is None or len(portfolio_value) < 2:
+        return None
+    
+    yearly = portfolio_value.resample("YE").last()
+    yearly_returns = yearly.pct_change().dropna() * 100
+    return yearly_returns
+
+
+def calculate_monthly_returns(portfolio_value):
+    """월별 수익률 계산"""
+    if portfolio_value is None or len(portfolio_value) < 2:
+        return None
+    
+    monthly_returns = portfolio_value.pct_change().dropna() * 100
+    return monthly_returns
+
+
+def create_monthly_heatmap_data(monthly_returns):
+    """월별 수익률 히트맵 데이터 생성 (연도 x 월)"""
+    if monthly_returns is None or len(monthly_returns) == 0:
+        return None
+    
+    # 연도와 월로 분리
+    monthly_returns.index = pd.to_datetime(monthly_returns.index)
+    monthly_returns_df = monthly_returns.to_frame("return")
+    monthly_returns_df['year'] = monthly_returns_df.index.year
+    monthly_returns_df['month'] = monthly_returns_df.index.month
+    
+    # 피벗 테이블 생성 (연도 x 월)
+    heatmap_data = monthly_returns_df.pivot_table(
+        values='return',
+        index='year',
+        columns='month',
+        aggfunc='first'
+    )
+    
+    # 컬럼 이름을 월 이름으로 변경 (있는 월만)
+    month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
+                   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    month_dict = {i: month_names[i-1] for i in range(1, 13)}
+    
+    # 실제 데이터가 있는 월만 선택
+    available_months = [month_dict[i] for i in heatmap_data.columns if i in month_dict]
+    heatmap_data.columns = [month_dict[i] if i in month_dict else f"Month_{i}" 
+                          for i in heatmap_data.columns]
+    
+    # 있는 월만 유지
+    heatmap_data = heatmap_data[[col for col in heatmap_data.columns if col in month_names]]
+    
+    # 연도 순서 역순 (최신 연도가 아래로)
+    heatmap_data = heatmap_data.sort_index(ascending=False)
+    
+    # 평균 행 계산 (NaN 값 제외하고 계산)
+    monthly_avg = heatmap_data.mean(axis=0, skipna=True)
+    avg_row = pd.DataFrame([monthly_avg.values], index=['평균'], columns=heatmap_data.columns)
+    
+    # 평균 행을 맨 앞에 추가 (Y축 역순이므로 맨 앞이 차트 하단에 표시됨)
+    heatmap_data = pd.concat([avg_row, heatmap_data])
+    
+    return heatmap_data
+
+
+def calculate_drawdown_events(portfolio_value):
+    """드로우다운 이벤트 계산"""
+    if portfolio_value is None or len(portfolio_value) < 2:
+        return None, None
+    
+    # 드로우다운 계산
+    cumulative = portfolio_value
+    running_max = cumulative.expanding().max()
+    drawdown = (cumulative - running_max) / running_max * 100
+    
+    # 드로우다운 이벤트 찾기 (새로운 드로우다운 시작)
+    drawdown_events = []
+    in_drawdown = False
+    drawdown_start = None
+    drawdown_start_value = None
+    max_drawdown = 0
+    
+    for i, (date, dd_value) in enumerate(drawdown.items()):
+        if dd_value < 0 and not in_drawdown:
+            # 드로우다운 시작
+            in_drawdown = True
+            drawdown_start = date
+            drawdown_start_value = cumulative.loc[date]
+            max_drawdown = dd_value
+        elif dd_value < max_drawdown and in_drawdown:
+            # 더 깊은 드로우다운
+            max_drawdown = dd_value
+        elif dd_value >= 0 and in_drawdown:
+            # 드로우다운 종료
+            # 최대 드로우다운 시점 찾기
+            drawdown_period = drawdown.loc[drawdown_start:date]
+            trough_date = drawdown_period.idxmin()
+            trough_value = drawdown_period.min()
+            
+            drawdown_events.append({
+                'start': drawdown_start,
+                'trough': trough_date,
+                'end': date,
+                'drawdown': trough_value
+            })
+            in_drawdown = False
+            max_drawdown = 0
+    
+    # 진행 중인 드로우다운 처리
+    if in_drawdown:
+        drawdown_period = drawdown.loc[drawdown_start:]
+        trough_date = drawdown_period.idxmin()
+        trough_value = drawdown_period.min()
+        drawdown_events.append({
+            'start': drawdown_start,
+            'trough': trough_date,
+            'end': portfolio_value.index[-1],
+            'drawdown': trough_value
+        })
+    
+    # 드로우다운 크기순으로 정렬
+    drawdown_events.sort(key=lambda x: x['drawdown'])
+    
+    return drawdown, drawdown_events
+
+
+def create_monthly_distribution(monthly_returns):
+    """월별 수익률 분포 히스토그램 데이터 생성"""
+    if monthly_returns is None or len(monthly_returns) == 0:
+        return None
+    
+    # 히스토그램 구간 설정 (-10% ~ 10%, 2% 간격)
+    bins = np.arange(-10, 12, 2)  # -10, -8, -6, ..., 8, 10
+    hist, bin_edges = np.histogram(monthly_returns.values, bins=bins)
+    
+    # 중간값 계산
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+    
+    return pd.DataFrame({
+        'bin_center': bin_centers,
+        'count': hist
+    })
 
 
 def get_asset_full_name(ticker: str) -> str:
@@ -629,6 +789,162 @@ if 'result_data' in st.session_state:
         )
         fig.update_layout(height=400)
         st.plotly_chart(fig, use_container_width=True)
+        
+        # ==== 추가 분석 데이터 표시 ====
+        analysis = result_data.get('analysis_data')
+        if analysis:
+            # 연도별 수익률
+            if analysis.get('yearly_returns') is not None and len(analysis['yearly_returns']) > 0:
+                st.markdown("---")
+                st.subheader("📊 연도별 수익률 (%)")
+                yearly_df = analysis['yearly_returns'].to_frame("수익률")
+                yearly_df.index = yearly_df.index.year
+                
+                # 색상 설정 (양수: 초록, 음수: 빨강)
+                colors = ['#d32f2f' if x < 0 else '#2e7d32' for x in yearly_df['수익률']]
+                
+                # 연도 레이블을 "2022년" 형식으로 변경
+                year_labels = [f"{int(year)}년" for year in yearly_df.index]
+                
+                fig = go.Figure()
+                fig.add_trace(go.Bar(
+                    x=year_labels,
+                    y=yearly_df['수익률'],
+                    marker_color=colors,
+                    text=[f"{x:.1f}%" for x in yearly_df['수익률']],
+                    textposition='outside',
+                    name='연도별 수익률'
+                ))
+                fig.update_layout(
+                    xaxis_title="연도",
+                    yaxis_title="수익률 (%)",
+                    height=400,
+                    showlegend=False,
+                    hovermode='x unified'
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            
+            # 월별 수익률 히트맵
+            if analysis.get('monthly_heatmap') is not None and not analysis['monthly_heatmap'].empty:
+                st.markdown("---")
+                st.subheader("📅 월별 수익률 (%)")
+                
+                heatmap_data = analysis['monthly_heatmap']
+                
+                # Y축 레이블 생성 (연도는 정수로만, 평균은 그대로)
+                y_labels = []
+                y_positions = []
+                for pos, idx in enumerate(heatmap_data.index):
+                    if idx == '평균':
+                        y_labels.append('평균')
+                    else:
+                        try:
+                            year_int = int(float(idx))
+                            y_labels.append(str(year_int))
+                        except:
+                            y_labels.append(str(idx))
+                    y_positions.append(pos)
+                
+                # 색상 스케일 설정 (빨강 -> 흰색 -> 초록)
+                fig = go.Figure(data=go.Heatmap(
+                    z=heatmap_data.values,
+                    x=heatmap_data.columns,
+                    y=y_positions,
+                    colorscale=[
+                        [0, '#d32f2f'],      # 빨강 (음수)
+                        [0.5, '#ffffff'],   # 흰색 (0)
+                        [1, '#2e7d32']      # 초록 (양수)
+                    ],
+                    text=[[f"{val:.1f}%" if not pd.isna(val) else "" for val in row] 
+                          for row in heatmap_data.values],
+                    texttemplate='%{text}',
+                    textfont={"size": 10},
+                    colorbar=dict(title="수익률 (%)"),
+                    ygap=2
+                ))
+                fig.update_layout(
+                    height=400 + len(heatmap_data) * 30,
+                    xaxis_title="월",
+                    yaxis_title="연도",
+                    yaxis=dict(
+                        autorange='reversed',
+                        tickmode='array',
+                        tickvals=y_positions,
+                        ticktext=y_labels,
+                        dtick=None
+                    )
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            
+            # 월별 수익률 분포
+            if analysis.get('monthly_distribution') is not None:
+                st.markdown("---")
+                st.subheader("📊 월별 수익률 분포")
+                
+                dist_data = analysis['monthly_distribution']
+                fig = go.Figure()
+                fig.add_trace(go.Bar(
+                    x=dist_data['bin_center'],
+                    y=dist_data['count'],
+                    marker_color='#2e7d32',
+                    name='빈도'
+                ))
+                fig.update_layout(
+                    xaxis_title="수익률 (%)",
+                    yaxis_title="빈도",
+                    height=400,
+                    showlegend=False
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            
+            # MDD 차트
+            if analysis.get('drawdown_series') is not None:
+                st.markdown("---")
+                st.subheader("📉 최대 손실폭 (MDD)")
+                
+                drawdown = analysis['drawdown_series']
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    mdd_value = result_data.get('performance_metrics', {}).get('최대 낙폭 (MDD)', 'N/A')
+                    st.metric("현재 MDD", mdd_value)
+                
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    x=drawdown.index,
+                    y=drawdown.values,
+                    mode='lines',
+                    fill='tozeroy',
+                    fillcolor='rgba(211, 47, 47, 0.3)',
+                    line=dict(color='#d32f2f', width=2),
+                    name='드로우다운'
+                ))
+                fig.add_hline(y=0, line_dash="dash", line_color="gray")
+                fig.update_layout(
+                    xaxis_title="날짜",
+                    yaxis_title="드로우다운 (%)",
+                    height=400,
+                    showlegend=False,
+                    hovermode='x unified'
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            
+            # 드로우다운 이벤트 테이블
+            if analysis.get('drawdown_events') is not None and len(analysis['drawdown_events']) > 0:
+                st.markdown("---")
+                st.subheader("📋 포트폴리오 드로우다운")
+                
+                events = analysis['drawdown_events'][:10]  # 상위 10개만
+                events_data = []
+                for i, event in enumerate(events, 1):
+                    events_data.append({
+                        '순위': i,
+                        '시작': event['start'].strftime('%Y/%m'),
+                        '종료': event['end'].strftime('%Y/%m'),
+                        '드로우다운': f"{event['drawdown']:.1f}%"
+                    })
+                
+                events_df = pd.DataFrame(events_data)
+                st.dataframe(events_df, use_container_width=True, hide_index=True)
 else:
     st.info("👈 왼쪽 사이드바에서 보유 금액을 입력하고 '실행' 버튼을 클릭하세요.")
 
