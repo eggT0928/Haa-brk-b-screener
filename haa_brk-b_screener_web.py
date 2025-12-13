@@ -1138,14 +1138,19 @@ if 'result_data' in st.session_state:
                             # 진행 중인 드로우다운
                             recovery_point = None
                     
-                    # 회복기간: trough부터 recovery_point까지의 기간 (개월)
-                    if recovery_point is not None and recovery_point > trough_date:
-                        recovery_months = (recovery_point.year - trough_date.year) * 12 + (recovery_point.month - trough_date.month)
+                    # 손실기간: start부터 recovery_point까지의 기간 (개월) - 전체 손실 구간
+                    if recovery_point is not None and recovery_point > start_date:
+                        loss_months = (recovery_point.year - start_date.year) * 12 + (recovery_point.month - start_date.month)
                     else:
-                        recovery_months = None
+                        # 아직 회복하지 못한 경우, start부터 현재까지
+                        loss_months = (end_date.year - start_date.year) * 12 + (end_date.month - start_date.month)
                     
-                    # 손실기간: start부터 end까지의 기간 (개월)
-                    loss_months = (end_date.year - start_date.year) * 12 + (end_date.month - start_date.month)
+                    # 회복기간: end부터 recovery_point까지의 기간 (개월) - 0% 복귀 후 원래 최고점 회복까지
+                    if recovery_point is not None and recovery_point > end_date:
+                        recovery_months = (recovery_point.year - end_date.year) * 12 + (recovery_point.month - end_date.month)
+                    else:
+                        # 아직 회복하지 못한 경우
+                        recovery_months = None
                     
                     events_data.append({
                         '순위': i,
