@@ -589,11 +589,11 @@ def create_monthly_distribution(monthly_returns):
     if monthly_returns is None or len(monthly_returns) == 0:
         return None
     
-    # 히스토그램 구간 설정 (-10% ~ 10%, 2% 간격)
-    bins = np.arange(-10, 12, 2)  # -10, -8, -6, ..., 8, 10
+    # 히스토그램 구간 설정 (-10% ~ 10%, 1% 간격으로 세분화)
+    bins = np.arange(-10, 11, 1)  # -10, -9, -8, ..., 9, 10
     hist, bin_edges = np.histogram(monthly_returns.values, bins=bins)
     
-    # 중간값 계산
+    # 중간값 계산 (각 구간의 중간값)
     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
     
     return pd.DataFrame({
@@ -918,11 +918,36 @@ if 'result_data' in st.session_state:
                 z_min = np.nanmin(heatmap_data.values)
                 z_max = np.nanmax(heatmap_data.values)
                 
+                # z 값을 정규화하여 음수는 0~0.5, 양수는 0.5~1로 매핑
+                # 이렇게 하면 0을 기준으로 색상이 확실히 분리됨
+                z_normalized = heatmap_data.values.copy()
+                abs_min = abs(z_min) if z_min < 0 else 0
+                abs_max = abs(z_max) if z_max > 0 else 0
+                max_abs = max(abs_min, abs_max)
+                
+                for i in range(len(z_normalized)):
+                    for j in range(len(z_normalized[i])):
+                        val = z_normalized[i, j]
+                        if not pd.isna(val):
+                            if val < 0:
+                                # 음수: 0~0.5 범위로 정규화
+                                if abs_min > 0:
+                                    z_normalized[i, j] = 0.5 * (1 - abs(val) / abs_min)
+                                else:
+                                    z_normalized[i, j] = 0.5
+                            elif val > 0:
+                                # 양수: 0.5~1 범위로 정규화
+                                if abs_max > 0:
+                                    z_normalized[i, j] = 0.5 + 0.5 * (val / abs_max)
+                                else:
+                                    z_normalized[i, j] = 0.5
+                            else:
+                                # 0
+                                z_normalized[i, j] = 0.5
+                
                 # 색상 스케일 설정: 음수는 빨강 계열, 양수는 초록 계열
-                # zmid를 0으로 설정하여 0을 기준으로 색상 분리
-                # plotly의 zmid 기능을 사용하면 0을 기준으로 대칭적으로 색상이 적용됨
                 fig = go.Figure(data=go.Heatmap(
-                    z=heatmap_data.values,
+                    z=z_normalized,
                     x=heatmap_data.columns,
                     y=y_positions,
                     colorscale=[
@@ -934,14 +959,22 @@ if 'result_data' in st.session_state:
                         [0.8, '#2e7d32'],     # 초록
                         [1.0, '#1b5e20']      # 진한 초록 (최대값)
                     ],
-                    zmid=0,  # 0을 중간값으로 설정하여 음수/양수 구분
-                    zmin=z_min,
-                    zmax=z_max,
                     text=[[f"{val:.1f}%" if not pd.isna(val) else "" for val in row] 
                           for row in heatmap_data.values],
                     texttemplate='%{text}',
                     textfont={"size": 10},
-                    colorbar=dict(title="수익률 (%)"),
+                    colorbar=dict(
+                        title="수익률 (%)",
+                        tickmode='array',
+                        tickvals=[0.0, 0.25, 0.5, 0.75, 1.0],
+                        ticktext=[
+                            f"{z_min:.1f}%" if z_min < 0 else "0%",
+                            f"{z_min/2:.1f}%" if z_min < 0 else "0%",
+                            "0%",
+                            f"{z_max/2:.1f}%" if z_max > 0 else "0%",
+                            f"{z_max:.1f}%" if z_max > 0 else "0%"
+                        ]
+                    ),
                     ygap=2
                 ))
                 fig.update_layout(
@@ -972,7 +1005,7 @@ if 'result_data' in st.session_state:
                 # 색상 설정 (음수: 빨강, 양수: 초록)
                 colors = ['#d32f2f' if x < 0 else '#2e7d32' for x in dist_data['bin_center']]
                 
-                # X축 레이블 생성 (구간 표시: -10%, -8%, ...)
+                # X축 레이블 생성 (모든 구간 표시: -10%, -9%, -8%, ..., 9%, 10%)
                 x_labels = [f"{int(bin_center)}%" for bin_center in dist_data['bin_center']]
                 
                 fig = go.Figure()
@@ -983,7 +1016,7 @@ if 'result_data' in st.session_state:
                     name='빈도',
                     text=[f"{pct:.1f}%" if count > 0 else "" for count, pct in zip(dist_data['count'], dist_data['percentage'])],
                     textposition='outside',
-                    textfont={"size": 11},
+                    textfont={"size": 10},
                     hovertemplate='수익률: %{x}<br>빈도: %{y}회<br>비율: %{customdata:.1f}%<extra></extra>',
                     customdata=dist_data['percentage']
                 ))
@@ -992,7 +1025,13 @@ if 'result_data' in st.session_state:
                     yaxis_title="빈도 (회)",
                     height=400,
                     showlegend=False,
-                    hovermode='x unified'
+                    hovermode='x unified',
+                    xaxis=dict(
+                        tickmode='linear',
+                        tick0=-10,
+                        dtick=1,  # 1% 간격으로 모든 틱 표시
+                        tickangle=-45  # 레이블 회전
+                    )
                 )
                 st.plotly_chart(fig, use_container_width=True)
             
