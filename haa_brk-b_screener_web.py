@@ -150,22 +150,26 @@ def display_results(
     for asset, score in selected_assets:
         price = data.loc[target_date, asset]
         shares = haa_bal / len(selected_assets) / price
+        purchase_amount = haa_bal / len(selected_assets)
         selected_data.append({
             "자산": asset,
             "모멘텀 점수": f"{score:.3f}",
             "현재 가격": f"${price:.2f}",
-            "구매 수량": f"{shares:.2f}"
+            "구매 수량": f"{shares:.2f}",
+            "구매 금액": f"${purchase_amount:,.2f}"
         })
     
     # BRK-B 모멘텀 점수 계산
     brk_price = data.loc[target_date, "BRK-B"]
     brk_shares = total_balance * 0.2 / brk_price
+    brk_purchase_amount = total_balance * 0.2
     brk_momentum = momentum_scores.loc[target_date, "BRK-B"]
     selected_data.append({
         "자산": "BRK-B",
         "모멘텀 점수": f"{brk_momentum:.3f}",
         "현재 가격": f"${brk_price:.2f}",
-        "구매 수량": f"{brk_shares:.2f}"
+        "구매 수량": f"{brk_shares:.2f}",
+        "구매 금액": f"${brk_purchase_amount:,.2f}"
     })
     
     # 반환할 데이터 준비
