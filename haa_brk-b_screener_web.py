@@ -427,14 +427,20 @@ def run_backtest(data: pd.DataFrame, momentum_scores: pd.DataFrame, initial_bala
         drawdown = (cumulative - running_max) / running_max
         mdd = drawdown.min()
         
-        # 샤프 비율 (무위험 수익률 0% 가정)
-        sharpe = (cagr / volatility) if volatility > 0 else 0
+        # 무위험 수익률 조회 (백테스트 기간 전체의 평균 사용)
+        start_date_str = monthly_dates[0].strftime('%Y-%m-%d')
+        end_date_str = monthly_dates[-1].strftime('%Y-%m-%d')
+        risk_free_rate = get_risk_free_rate(start_date=start_date_str, end_date=end_date_str)
+        
+        # 샤프 비율 (무위험 수익률 반영)
+        sharpe = ((cagr - risk_free_rate) / volatility) if volatility > 0 else 0
         
         performance_metrics = {
             "총 수익률": f"{total_return*100:.2f}%",
             "CAGR": f"{cagr*100:.2f}%",
             "연환산 변동성": f"{volatility*100:.2f}%",
             "샤프 비율": f"{sharpe:.2f}",
+            "무위험 수익률": f"{risk_free_rate*100:.2f}%",
             "최대 낙폭 (MDD)": f"{mdd*100:.2f}%",
             "시작일": monthly_dates[0].strftime('%Y-%m-%d'),
             "종료일": monthly_dates[-1].strftime('%Y-%m-%d'),
@@ -461,6 +467,36 @@ def run_backtest(data: pd.DataFrame, momentum_scores: pd.DataFrame, initial_bala
         import traceback
         st.error(traceback.format_exc())
         return None, None, None, None
+
+
+def get_risk_free_rate(start_date: str = None, end_date: str = None):
+    """
+    무위험 수익률 조회 (미국 10년 국채 수익률)
+    start_date와 end_date가 제공되면 해당 기간의 평균을 사용,
+    없으면 최근 1개월 값을 사용
+    """
+    try:
+        # 미국 10년 국채 수익률 조회 (^TNX)
+        ticker = yf.Ticker("^TNX")
+        
+        if start_date and end_date:
+            # 백테스트 기간 전체의 평균 사용
+            hist = ticker.history(start=start_date, end=end_date)
+            if not hist.empty:
+                # 기간 전체의 평균 수익률 (이미 % 단위이므로 100으로 나눔)
+                avg_rate = hist["Close"].mean() / 100.0
+                return avg_rate
+        else:
+            # 최근 1개월 값 사용 (기존 방식)
+            hist = ticker.history(period="1mo")
+            if not hist.empty:
+                current_rate = hist["Close"].iloc[-1] / 100.0
+                return current_rate
+    except:
+        pass
+    
+    # 조회 실패 시 보수적인 기본값 사용 (최근 10년 국채 평균 약 2.5%)
+    return 0.025
 
 
 def calculate_yearly_returns(portfolio_value):
@@ -791,7 +827,7 @@ if 'result_data' in st.session_state:
     if result_data.get('performance_metrics'):
         st.subheader("📊 백테스트 성과 지표")
         metrics = result_data['performance_metrics']
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3, col4, col5 = st.columns(5)
         with col1:
             st.metric("CAGR", metrics.get("CAGR", "N/A"))
             st.metric("총 수익률", metrics.get("총 수익률", "N/A"))
@@ -800,9 +836,11 @@ if 'result_data' in st.session_state:
             st.metric("샤프 비율", metrics.get("샤프 비율", "N/A"))
         with col3:
             st.metric("최대 낙폭 (MDD)", metrics.get("최대 낙폭 (MDD)", "N/A"))
-            st.metric("기간", metrics.get("기간 (년)", "N/A") + "년")
+            st.metric("무위험 수익률", metrics.get("무위험 수익률", "N/A"))
         with col4:
+            st.metric("기간", metrics.get("기간 (년)", "N/A") + "년")
             st.metric("시작일", metrics.get("시작일", "N/A"))
+        with col5:
             st.metric("종료일", metrics.get("종료일", "N/A"))
     
     st.markdown("---")
