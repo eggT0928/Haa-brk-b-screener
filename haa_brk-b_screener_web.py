@@ -836,7 +836,13 @@ if 'result_data' in st.session_state:
             st.metric("샤프 비율", metrics.get("샤프 비율", "N/A"))
         with col3:
             st.metric("최대 낙폭 (MDD)", metrics.get("최대 낙폭 (MDD)", "N/A"))
-            st.metric("무위험 수익률", metrics.get("무위험 수익률", "N/A"))
+            # 무위험 수익률 (백테스트 기간 전체 평균)
+            risk_free_rate_display = metrics.get("무위험 수익률", "N/A")
+            if risk_free_rate_display != "N/A":
+                st.metric("무위험 수익률 (기간 평균)", risk_free_rate_display, 
+                         help="백테스트 기간 전체의 미국 10년 국채 수익률 평균")
+            else:
+                st.metric("무위험 수익률 (기간 평균)", "N/A")
         with col4:
             st.metric("기간", metrics.get("기간 (년)", "N/A") + "년")
             st.metric("시작일", metrics.get("시작일", "N/A"))
