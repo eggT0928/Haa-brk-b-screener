@@ -347,10 +347,10 @@ def run_backtest(data: pd.DataFrame, momentum_scores: pd.DataFrame, initial_bala
             # 포트폴리오 수익률 = HAA 80% + BRK-B 20%
             portfolio_return = (haa_weight * haa_return) + (brk_weight * brk_return)
             
-            # 디버깅: 월별 수익률이 0인 경우 확인
-            if abs(portfolio_return) < 0.0001:  # 거의 0인 경우
-                selected_asset_names = [asset for asset, _ in selected_assets] if selected_assets else []
-                st.warning(f"⚠️ {current_date.strftime('%Y-%m')}: 포트폴리오 수익률 0% (선택된 자산: {selected_asset_names}, HAA 수익률: {haa_return*100:.2f}%, BRK-B 수익률: {brk_return*100:.2f}%, 데이터 있는 자산 수: {haa_count})")
+            # 디버깅: 월별 수익률이 0인 경우 확인 (주석 처리 - 필요시 활성화)
+            # if abs(portfolio_return) < 0.0001:  # 거의 0인 경우
+            #     selected_asset_names = [asset for asset, _ in selected_assets] if selected_assets else []
+            #     st.warning(f"⚠️ {current_date.strftime('%Y-%m')}: 포트폴리오 수익률 0% (선택된 자산: {selected_asset_names}, HAA 수익률: {haa_return*100:.2f}%, BRK-B 수익률: {brk_return*100:.2f}%, 데이터 있는 자산 수: {haa_count})")
             
             # 포트폴리오 가치 업데이트 (복리 계산)
             if portfolio_value.iloc[i-1] > 0:
