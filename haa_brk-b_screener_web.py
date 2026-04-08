@@ -3,6 +3,7 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
+from pandas.tseries.offsets import MonthEnd, YearEnd
 import plotly.graph_objects as go
 import plotly.express as px
 
@@ -256,8 +257,8 @@ def run_backtest(data: pd.DataFrame, momentum_scores: pd.DataFrame, initial_bala
         else:
             data_filtered = data.copy()
 
-        # 월말 날짜 추출 (최신 pandas에서는 'M' 대신 'ME')
-        monthly_dates = data_filtered.resample("ME").last().index
+        # 월말 날짜 추출 (문자열 별칭 대신 offset 객체를 사용해 pandas 버전 차이 회피)
+        monthly_dates = data_filtered.resample(MonthEnd()).last().index
 
         # 최소 2개월 데이터 필요
         if len(monthly_dates) < 2:
@@ -480,7 +481,7 @@ def calculate_yearly_returns(portfolio_value):
     if portfolio_value is None or len(portfolio_value) < 2:
         return None
 
-    yearly = portfolio_value.resample("YE").last()
+    yearly = portfolio_value.resample(YearEnd()).last()
     yearly_returns = yearly.pct_change().dropna() * 100
     return yearly_returns
 
@@ -646,11 +647,11 @@ def get_recent_rebalancing_history(data: pd.DataFrame, momentum_scores: pd.DataF
     start_date = end_date - pd.DateOffset(months=months)
 
     # 월말 날짜 추출
-    monthly_dates = data.resample("ME").last().index
+    monthly_dates = data.resample(MonthEnd()).last().index
     monthly_dates = monthly_dates[(monthly_dates >= start_date) & (monthly_dates <= end_date)]
 
     # 현재 날짜가 포함된 월의 마지막 거래일도 추가
-    current_month_end = data.resample("ME").last().index[-1] if len(data) > 0 else None
+    current_month_end = data.resample(MonthEnd()).last().index[-1] if len(data) > 0 else None
     if current_month_end is not None and current_month_end not in monthly_dates and current_month_end >= start_date:
         monthly_dates = pd.Index(list(monthly_dates) + [current_month_end]).sort_values()
 
