@@ -3,10 +3,12 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import json
+import base64
 from datetime import datetime, timedelta
 from pandas.tseries.offsets import MonthEnd, YearEnd
 import plotly.graph_objects as go
 import plotly.express as px
+import streamlit.components.v1 as components
 
 
 def calculate_momentum_scores(data: pd.DataFrame) -> pd.DataFrame:
@@ -641,6 +643,78 @@ def get_asset_full_name(ticker: str) -> str:
     return asset_names.get(ticker, ticker)
 
 
+def _encode_holdings_payload(holdings: dict) -> str:
+    payload = json.dumps(holdings, ensure_ascii=False, separators=(",", ":"))
+    return base64.urlsafe_b64encode(payload.encode("utf-8")).decode("utf-8")
+
+
+def _decode_holdings_payload(payload: str):
+    decoded = base64.urlsafe_b64decode(payload.encode("utf-8")).decode("utf-8")
+    data = json.loads(decoded)
+    if not isinstance(data, dict):
+        raise ValueError("Invalid holdings payload")
+    return data
+
+
+def _inject_localstorage_restore_script():
+    """브라우저 localStorage → URL 파라미터로 복원 트리거"""
+    components.html(
+        """
+        <script>
+        const KEY = "haa_holdings_v1";
+        const url = new URL(window.parent.location.href);
+        if (!url.searchParams.get("holdings")) {
+          const saved = window.localStorage.getItem(KEY);
+          if (saved) {
+            url.searchParams.set("holdings", saved);
+            window.parent.location.replace(url.toString());
+          }
+        }
+        </script>
+        """,
+        height=0,
+    )
+
+
+def _save_holdings_to_localstorage(holdings: dict):
+    payload = _encode_holdings_payload(holdings)
+    components.html(
+        f"""
+        <script>
+        const KEY = "haa_holdings_v1";
+        window.localStorage.setItem(KEY, "{payload}");
+        </script>
+        """,
+        height=0,
+    )
+
+
+def _clear_holdings_from_localstorage():
+    components.html(
+        """
+        <script>
+        const KEY = "haa_holdings_v1";
+        window.localStorage.removeItem(KEY);
+        </script>
+        """,
+        height=0,
+    )
+
+
+def restore_holdings_from_query_params(tickers: list):
+    """URL의 holdings 파라미터를 읽어 세션 상태에 반영"""
+    holdings_payload = st.query_params.get("holdings", "")
+    already_restored = st.session_state.get("holdings_restored", False)
+    if holdings_payload and not already_restored:
+        try:
+            restored = _decode_holdings_payload(holdings_payload)
+            st.session_state["holdings"] = {t: float(restored.get(t, 0.0)) for t in tickers}
+            st.session_state["holdings_restored"] = True
+            st.sidebar.success("localStorage에서 보유수량을 자동 복원했습니다.")
+        except Exception:
+            st.sidebar.warning("localStorage 자동 복원에 실패했습니다. JSON 백업을 사용해주세요.")
+
+
 def initialize_holdings_state(tickers: list):
     """세션 상태에 보유 수량 딕셔너리 초기화/동기화"""
     if "holdings" not in st.session_state:
@@ -668,6 +742,7 @@ def render_holdings_manager(tickers: list):
                 if isinstance(payload, dict):
                     for t in tickers:
                         st.session_state["holdings"][t] = float(payload.get(t, 0.0))
+                    _save_holdings_to_localstorage(st.session_state["holdings"])
                     st.success("보유수량을 불러왔습니다.")
                 else:
                     st.error("JSON 형식이 올바르지 않습니다. (객체 형태 필요)")
@@ -688,10 +763,12 @@ def render_holdings_manager(tickers: list):
         with col1:
             if st.button("💾 보유수량 저장", use_container_width=True):
                 st.session_state["holdings"] = edited_holdings
+                _save_holdings_to_localstorage(st.session_state["holdings"])
                 st.success("현재 보유수량이 저장되었습니다.")
         with col2:
             if st.button("↩️ 수량 초기화", use_container_width=True):
                 st.session_state["holdings"] = {t: 0.0 for t in tickers}
+                _clear_holdings_from_localstorage()
                 st.success("보유수량을 0으로 초기화했습니다.")
                 st.rerun()
 
@@ -769,12 +846,16 @@ st.set_page_config(
 
 st.title("📊 HAA 전략 스크리너")
 st.markdown("---")
+APP_TICKERS = ["SPY", "VEA", "VWO", "IWM", "BIL", "IEF", "TLT", "TIP", "PDBC", "VNQ", "BRK-B"]
+
+# 브라우저 localStorage에 보관된 보유수량 자동 복원
+_inject_localstorage_restore_script()
+restore_holdings_from_query_params(APP_TICKERS)
 
 # 사이드바에 입력 필드
 with st.sidebar:
     st.header("⚙️ 설정")
-    app_tickers = ["SPY", "VEA", "VWO", "IWM", "BIL", "IEF", "TLT", "TIP", "PDBC", "VNQ", "BRK-B"]
-    render_holdings_manager(app_tickers)
+    render_holdings_manager(APP_TICKERS)
     st.markdown("---")
     balance_text = st.text_input(
         "보유 금액 입력",
