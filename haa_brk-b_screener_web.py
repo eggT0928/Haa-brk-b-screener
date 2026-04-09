@@ -2,9 +2,13 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
+import json
+import base64
 from datetime import datetime, timedelta
+from pandas.tseries.offsets import MonthEnd, YearEnd
 import plotly.graph_objects as go
 import plotly.express as px
+import streamlit.components.v1 as components
 
 
 def calculate_momentum_scores(data: pd.DataFrame) -> pd.DataFrame:
@@ -256,8 +260,8 @@ def run_backtest(data: pd.DataFrame, momentum_scores: pd.DataFrame, initial_bala
         else:
             data_filtered = data.copy()
 
-        # 월말 날짜 추출 (최신 pandas에서는 'M' 대신 'ME')
-        monthly_dates = data_filtered.resample("ME").last().index
+        # 월말 날짜 추출 (문자열 별칭 대신 offset 객체를 사용해 pandas 버전 차이 회피)
+        monthly_dates = data_filtered.resample(MonthEnd()).last().index
 
         # 최소 2개월 데이터 필요
         if len(monthly_dates) < 2:
@@ -480,7 +484,7 @@ def calculate_yearly_returns(portfolio_value):
     if portfolio_value is None or len(portfolio_value) < 2:
         return None
 
-    yearly = portfolio_value.resample("YE").last()
+    yearly = portfolio_value.resample(YearEnd()).last()
     yearly_returns = yearly.pct_change().dropna() * 100
     return yearly_returns
 
@@ -639,6 +643,145 @@ def get_asset_full_name(ticker: str) -> str:
     return asset_names.get(ticker, ticker)
 
 
+def _encode_holdings_payload(holdings: dict) -> str:
+    payload = json.dumps(holdings, ensure_ascii=False, separators=(",", ":"))
+    return base64.urlsafe_b64encode(payload.encode("utf-8")).decode("utf-8")
+
+
+def _decode_holdings_payload(payload: str):
+    decoded = base64.urlsafe_b64decode(payload.encode("utf-8")).decode("utf-8")
+    data = json.loads(decoded)
+    if not isinstance(data, dict):
+        raise ValueError("Invalid holdings payload")
+    return data
+
+
+def _inject_localstorage_restore_script():
+    """브라우저 localStorage → URL 파라미터로 복원 트리거"""
+    components.html(
+        """
+        <script>
+        const KEY = "haa_holdings_v1";
+        const url = new URL(window.parent.location.href);
+        if (!url.searchParams.get("holdings")) {
+          const saved = window.localStorage.getItem(KEY);
+          if (saved) {
+            url.searchParams.set("holdings", saved);
+            window.parent.location.replace(url.toString());
+          }
+        }
+        </script>
+        """,
+        height=0,
+    )
+
+
+def _save_holdings_to_localstorage(holdings: dict):
+    payload = _encode_holdings_payload(holdings)
+    components.html(
+        f"""
+        <script>
+        const KEY = "haa_holdings_v1";
+        window.localStorage.setItem(KEY, "{payload}");
+        </script>
+        """,
+        height=0,
+    )
+
+
+def _clear_holdings_from_localstorage():
+    components.html(
+        """
+        <script>
+        const KEY = "haa_holdings_v1";
+        window.localStorage.removeItem(KEY);
+        </script>
+        """,
+        height=0,
+    )
+
+
+def restore_holdings_from_query_params(tickers: list):
+    """URL의 holdings 파라미터를 읽어 세션 상태에 반영"""
+    holdings_payload = st.query_params.get("holdings", "")
+    already_restored = st.session_state.get("holdings_restored", False)
+    if holdings_payload and not already_restored:
+        try:
+            restored = _decode_holdings_payload(holdings_payload)
+            st.session_state["holdings"] = {t: float(restored.get(t, 0.0)) for t in tickers}
+            st.session_state["holdings_restored"] = True
+            st.sidebar.success("localStorage에서 보유수량을 자동 복원했습니다.")
+        except Exception:
+            st.sidebar.warning("localStorage 자동 복원에 실패했습니다. JSON 백업을 사용해주세요.")
+
+
+def initialize_holdings_state(tickers: list):
+    """세션 상태에 보유 수량 딕셔너리 초기화/동기화"""
+    if "holdings" not in st.session_state:
+        st.session_state["holdings"] = {t: 0.0 for t in tickers}
+    else:
+        for t in tickers:
+            st.session_state["holdings"].setdefault(t, 0.0)
+
+
+def render_holdings_manager(tickers: list):
+    """사이드바에서 현재 보유 수량 입력/저장/불러오기 UI"""
+    initialize_holdings_state(tickers)
+
+    with st.sidebar.expander("📦 현재 보유수량 저장", expanded=False):
+        uploaded_file = st.file_uploader(
+            "보유수량 JSON 불러오기",
+            type=["json"],
+            key="holdings_json_upload",
+            help="티커:수량 형태의 JSON 파일을 업로드하세요."
+        )
+
+        if uploaded_file is not None:
+            try:
+                payload = json.load(uploaded_file)
+                if isinstance(payload, dict):
+                    for t in tickers:
+                        st.session_state["holdings"][t] = float(payload.get(t, 0.0))
+                    _save_holdings_to_localstorage(st.session_state["holdings"])
+                    st.success("보유수량을 불러왔습니다.")
+                else:
+                    st.error("JSON 형식이 올바르지 않습니다. (객체 형태 필요)")
+            except Exception as e:
+                st.error(f"JSON 불러오기 실패: {e}")
+
+        edited_holdings = {}
+        for t in tickers:
+            edited_holdings[t] = st.number_input(
+                f"{t} 수량",
+                min_value=0.0,
+                value=float(st.session_state["holdings"].get(t, 0.0)),
+                step=1.0,
+                key=f"holding_input_{t}"
+            )
+
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("💾 보유수량 저장", use_container_width=True):
+                st.session_state["holdings"] = edited_holdings
+                _save_holdings_to_localstorage(st.session_state["holdings"])
+                st.success("현재 보유수량이 저장되었습니다.")
+        with col2:
+            if st.button("↩️ 수량 초기화", use_container_width=True):
+                st.session_state["holdings"] = {t: 0.0 for t in tickers}
+                _clear_holdings_from_localstorage()
+                st.success("보유수량을 0으로 초기화했습니다.")
+                st.rerun()
+
+        holdings_json = json.dumps(st.session_state["holdings"], ensure_ascii=False, indent=2)
+        st.download_button(
+            label="📥 보유수량 JSON 다운로드",
+            data=holdings_json,
+            file_name="haa_holdings.json",
+            mime="application/json",
+            use_container_width=True
+        )
+
+
 def get_recent_rebalancing_history(data: pd.DataFrame, momentum_scores: pd.DataFrame, months: int = 12):
     """최근 N개월 리밸런싱 내역 추출"""
     # 현재 날짜 기준으로 과거 N개월
@@ -646,11 +789,11 @@ def get_recent_rebalancing_history(data: pd.DataFrame, momentum_scores: pd.DataF
     start_date = end_date - pd.DateOffset(months=months)
 
     # 월말 날짜 추출
-    monthly_dates = data.resample("ME").last().index
+    monthly_dates = data.resample(MonthEnd()).last().index
     monthly_dates = monthly_dates[(monthly_dates >= start_date) & (monthly_dates <= end_date)]
 
     # 현재 날짜가 포함된 월의 마지막 거래일도 추가
-    current_month_end = data.resample("ME").last().index[-1] if len(data) > 0 else None
+    current_month_end = data.resample(MonthEnd()).last().index[-1] if len(data) > 0 else None
     if current_month_end is not None and current_month_end not in monthly_dates and current_month_end >= start_date:
         monthly_dates = pd.Index(list(monthly_dates) + [current_month_end]).sort_values()
 
@@ -703,10 +846,17 @@ st.set_page_config(
 
 st.title("📊 HAA 전략 스크리너")
 st.markdown("---")
+APP_TICKERS = ["SPY", "VEA", "VWO", "IWM", "BIL", "IEF", "TLT", "TIP", "PDBC", "VNQ", "BRK-B"]
+
+# 브라우저 localStorage에 보관된 보유수량 자동 복원
+_inject_localstorage_restore_script()
+restore_holdings_from_query_params(APP_TICKERS)
 
 # 사이드바에 입력 필드
 with st.sidebar:
     st.header("⚙️ 설정")
+    render_holdings_manager(APP_TICKERS)
+    st.markdown("---")
     balance_text = st.text_input(
         "보유 금액 입력",
         value="10000",
@@ -768,6 +918,41 @@ if "result_data" in st.session_state:
         use_container_width=True,
         hide_index=True
     )
+
+    st.markdown("---")
+
+    # ==== 현재 보유 포지션 평가 ====
+    st.subheader("📦 현재 보유 포지션")
+    holdings = st.session_state.get("holdings", {})
+    price_snapshot = result_data["data"].loc[result_data["target_date"]]
+    holding_rows = []
+    for t, qty in holdings.items():
+        if qty > 0 and t in price_snapshot.index:
+            current_price = float(price_snapshot[t])
+            holding_rows.append({
+                "자산": t,
+                "자산명": get_asset_full_name(t),
+                "보유수량": float(qty),
+                "현재가격": current_price,
+                "평가금액": current_price * float(qty)
+            })
+
+    if holding_rows:
+        holdings_df = pd.DataFrame(holding_rows)
+        total_holding_value = holdings_df["평가금액"].sum()
+        col_h1, col_h2 = st.columns(2)
+        with col_h1:
+            st.metric("총 평가금액", f"${total_holding_value:,.2f}")
+        with col_h2:
+            diff = total_holding_value - result_data["total_balance"]
+            st.metric("입력 보유금액 대비", f"${diff:,.2f}")
+
+        holdings_view = holdings_df.copy()
+        holdings_view["현재가격"] = holdings_view["현재가격"].map(lambda x: f"${x:,.2f}")
+        holdings_view["평가금액"] = holdings_view["평가금액"].map(lambda x: f"${x:,.2f}")
+        st.dataframe(holdings_view, use_container_width=True, hide_index=True)
+    else:
+        st.info("사이드바의 '현재 보유수량 저장'에서 수량을 입력하면 평가금액이 표시됩니다.")
 
     st.markdown("---")
 
