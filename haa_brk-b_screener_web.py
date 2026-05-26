@@ -421,6 +421,7 @@ def run_backtest(data: pd.DataFrame, momentum_scores: pd.DataFrame, initial_bala
             "연환산 변동성": f"{volatility*100:.2f}%",
             "샤프 비율": f"{sharpe:.2f}",
             "무위험 수익률": f"{risk_free_rate*100:.2f}%",
+            "무위험 수익률 기준": "미국 13주 단기국채 수익률 (^IRX) 평균",
             "최대 낙폭 (MDD)": f"{mdd*100:.2f}%",
             "시작일": monthly_dates[0].strftime("%Y-%m-%d"),
             "종료일": monthly_dates[-1].strftime("%Y-%m-%d"),
@@ -452,26 +453,32 @@ def run_backtest(data: pd.DataFrame, momentum_scores: pd.DataFrame, initial_bala
 
 def get_risk_free_rate(start_date: str = None, end_date: str = None):
     """
-    무위험 수익률 조회 (미국 10년 국채 수익률)
+    무위험 수익률 조회 (미국 13주 단기국채 수익률, ^IRX)
     start_date와 end_date가 제공되면 해당 기간의 평균을 사용,
-    없으면 최근 1개월 값을 사용
+    없으면 최근 1개월 값을 사용합니다.
+
+    참고:
+    - ^IRX 는 Yahoo Finance에서 13주 T-Bill 수익률 지표로 많이 사용됩니다.
+    - 값이 5.25 형태로 내려오면 이는 5.25%를 뜻하므로 100으로 나누어 연율 소수로 변환합니다.
     """
     try:
-        # 미국 10년 국채 수익률 조회 (^TNX)
-        ticker = yf.Ticker("^TNX")
+        # 미국 13주 단기국채 수익률 조회 (^IRX)
+        ticker = yf.Ticker("^IRX")
 
         if start_date and end_date:
-            # 백테스트 기간 전체의 평균 사용
+            # 백테스트 기간 전체의 평균 단기 무위험 수익률 사용
             hist = ticker.history(start=start_date, end=end_date)
             if not hist.empty:
-                avg_rate = hist["Close"].mean() / 100.0
-                return avg_rate
+                avg_rate = hist["Close"].dropna().mean() / 100.0
+                if pd.notna(avg_rate):
+                    return float(avg_rate)
         else:
-            # 최근 1개월 값 사용
+            # 최근 1개월 마지막 값 사용
             hist = ticker.history(period="1mo")
             if not hist.empty:
-                current_rate = hist["Close"].iloc[-1] / 100.0
-                return current_rate
+                current_rate = hist["Close"].dropna().iloc[-1] / 100.0
+                if pd.notna(current_rate):
+                    return float(current_rate)
     except Exception:
         pass
 
@@ -989,8 +996,9 @@ if "result_data" in st.session_state:
             st.metric(
                 "무위험 수익률",
                 metrics.get("무위험 수익률", "N/A"),
-                help="백테스트 기간 전체의 미국 10년 국채 수익률 평균"
+                help="백테스트 기간 전체의 미국 13주 단기국채 수익률(^IRX) 평균"
             )
+            st.caption(f"기준: {metrics.get('무위험 수익률 기준', '미국 13주 단기국채 수익률 (^IRX) 평균')}")
         with col3:
             st.metric("최대 낙폭 (MDD)", metrics.get("최대 낙폭 (MDD)", "N/A"))
         with col4:
