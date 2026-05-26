@@ -11,6 +11,32 @@ import plotly.express as px
 import streamlit.components.v1 as components
 
 
+STRATEGY_TICKERS = ["SPY", "VEA", "VWO", "IWM", "BIL", "IEF", "TLT", "TIP", "PDBC", "VNQ", "BRK-B"]
+APP_TICKERS = STRATEGY_TICKERS + ["SPYM"]
+SP500_REBALANCE_OPTIONS = ["SPY", "SPYM"]
+
+
+def get_rebalance_ticker(asset: str, sp500_rebalance_ticker: str) -> str:
+    """리밸런싱 실행용 티커 반환 (신호/백테스트는 SPY 기준 유지)"""
+    return sp500_rebalance_ticker if asset == "SPY" else asset
+
+
+def get_price_with_fallback(pricing_data: pd.DataFrame, strategy_data: pd.DataFrame, target_date: pd.Timestamp,
+                            asset: str, sp500_rebalance_ticker: str) -> float:
+    """실행용 티커 가격을 우선 사용하고, 없으면 전략 티커 가격으로 대체"""
+    exec_ticker = get_rebalance_ticker(asset, sp500_rebalance_ticker)
+    if exec_ticker in pricing_data.columns and target_date in pricing_data.index:
+        px = pricing_data.loc[target_date, exec_ticker]
+        if not pd.isna(px):
+            return float(px)
+    return float(strategy_data.loc[target_date, asset])
+
+
+def format_selected_asset_label(asset: str, sp500_rebalance_ticker: str) -> str:
+    """선택 자산 표시용 라벨 반환"""
+    return get_rebalance_ticker(asset, sp500_rebalance_ticker)
+
+
 def calculate_momentum_scores(data: pd.DataFrame) -> pd.DataFrame:
     """모멘텀 점수 계산"""
     aligned_returns = []
@@ -64,13 +90,13 @@ def select_assets(momentum_scores: pd.DataFrame, data: pd.DataFrame, target_date
     return selected, target_date
 
 
-def run_screener(total_balance: float):
-    """스크리너 실행"""
-    tickers = [
-        "SPY", "VEA", "VWO", "IWM",
-        "BIL", "IEF", "TLT", "TIP",
-        "PDBC", "VNQ", "BRK-B"
-    ]
+def run_screener(total_balance: float, sp500_rebalance_ticker: str = "SPY"):
+    """스크리너 실행
+    - 리밸런싱 실행은 SPY 또는 SPYM 중 사용자가 선택
+    - 모멘텀 계산과 백테스트는 항상 SPY 기준 유지
+    """
+    strategy_tickers = STRATEGY_TICKERS.copy()
+    download_tickers = strategy_tickers + (["SPYM"] if "SPYM" not in strategy_tickers else [])
 
     # 1) 과거 데이터 다운로드
     start_date = "2014-11-01"
@@ -78,64 +104,74 @@ def run_screener(total_balance: float):
 
     with st.spinner("데이터를 다운로드하는 중..."):
         # 수정주가(Adj Close) 다운로드 - 배당/분할을 반영한 가격
-        data = yf.download(
-            tickers,
+        downloaded = yf.download(
+            download_tickers,
             start=start_date,
             end=end_date,
             auto_adjust=False,
             progress=False
-        )["Adj Close"]  # 수정주가 사용 (모멘텀 점수 계산에 사용)
-        data.index = data.index.tz_localize(None)
+        )["Adj Close"]
+        if isinstance(downloaded, pd.Series):
+            downloaded = downloaded.to_frame()
+        pricing_data = downloaded.copy()
+        pricing_data.index = pricing_data.index.tz_localize(None)
 
         # 2) 오늘 장중 가격(fast_info)을 마지막 행으로 추가
         today = pd.Timestamp.now().normalize()
         fast_prices = {}
-        for t in tickers:
+        for t in download_tickers:
             try:
                 ticker = yf.Ticker(t)
-                # 장중 가격 직접 접근 (실패 시 예외 발생)
                 fast_prices[t] = ticker.fast_info["last_price"]
             except Exception:
-                # fast_info 실패 시 마지막 가격 사용 (장중 가격이 아닐 수 있음)
-                fast_prices[t] = data[t].iloc[-1]
+                if t in pricing_data.columns and len(pricing_data[t].dropna()) > 0:
+                    fast_prices[t] = pricing_data[t].dropna().iloc[-1]
 
-        if today not in data.index:
-            data.loc[today] = pd.Series(fast_prices)
-            data.sort_index(inplace=True)
+        if today not in pricing_data.index and fast_prices:
+            pricing_data.loc[today] = pd.Series(fast_prices)
+            pricing_data.sort_index(inplace=True)
 
-        # 3) 모멘텀 점수 계산
+        # 3) 전략용 데이터는 기존대로 SPY 기준만 사용
+        data = pricing_data[strategy_tickers].copy()
+
+        # 4) 모멘텀 점수 계산
         momentum_scores = calculate_momentum_scores(data)
 
-        # 4) TIP 기준 자산 선택 (offense/defense) 및 target_date 결정
+        # 5) TIP 기준 자산 선택 (offense/defense) 및 target_date 결정
         selected_assets, target_date = select_assets(momentum_scores, data)
 
-        # 5) 백테스트 실행
+        # 6) 백테스트 실행 (항상 SPY 기준)
         portfolio_value, rebalancing_history, performance_metrics, analysis_data = run_backtest(
             data, momentum_scores, total_balance
         )
 
-        # 6) 최근 12개월 리밸런싱 내역
-        recent_rebalancing = get_recent_rebalancing_history(data, momentum_scores, months=12)
+        # 7) 최근 12개월 리밸런싱 내역 (표시만 선택 ETF 반영)
+        recent_rebalancing = get_recent_rebalancing_history(
+            data, momentum_scores, months=12, sp500_rebalance_ticker=sp500_rebalance_ticker
+        )
 
-        # 7) 결과 요약 및 테이블 생성
+        # 8) 결과 요약 및 테이블 생성
         return display_results(
             momentum_scores,
             data,
+            pricing_data,
             selected_assets,
-            tickers,
+            strategy_tickers,
             total_balance,
             target_date,
             portfolio_value,
             rebalancing_history,
             performance_metrics,
             recent_rebalancing,
-            analysis_data
+            analysis_data,
+            sp500_rebalance_ticker=sp500_rebalance_ticker
         )
 
 
 def display_results(
     momentum_scores: pd.DataFrame,
     data: pd.DataFrame,
+    pricing_data: pd.DataFrame,
     selected_assets: list,
     tickers: list,
     total_balance: float,
@@ -144,19 +180,25 @@ def display_results(
     rebalancing_history: list = None,
     performance_metrics: dict = None,
     recent_rebalancing: list = None,
-    analysis_data: dict = None
+    analysis_data: dict = None,
+    sp500_rebalance_ticker: str = "SPY"
 ):
-    """결과 표시 및 데이터 반환"""
+    """결과 표시 및 데이터 반환
+    - 신호/랭킹/백테스트는 SPY 기준
+    - 실제 매수 추천 수량/가격은 SPY 또는 SPYM 중 선택한 티커 기준
+    """
     haa_bal = total_balance * 0.8
 
     # 선택된 자산 데이터 준비
     selected_data = []
     for asset, score in selected_assets:
-        price = data.loc[target_date, asset]
+        execution_asset = get_rebalance_ticker(asset, sp500_rebalance_ticker)
+        price = get_price_with_fallback(pricing_data, data, target_date, asset, sp500_rebalance_ticker)
         shares = haa_bal / len(selected_assets) / price
         purchase_amount = haa_bal / len(selected_assets)
         selected_data.append({
-            "자산": asset,
+            "자산": execution_asset,
+            "신호 기준": asset,
             "모멘텀 점수": f"{score:.3f}",
             "현재 가격": f"${price:.2f}",
             "구매 수량": f"{shares:.2f}",
@@ -164,12 +206,13 @@ def display_results(
         })
 
     # BRK-B 모멘텀 점수 계산
-    brk_price = data.loc[target_date, "BRK-B"]
+    brk_price = float(pricing_data.loc[target_date, "BRK-B"]) if "BRK-B" in pricing_data.columns else float(data.loc[target_date, "BRK-B"])
     brk_shares = total_balance * 0.2 / brk_price
     brk_purchase_amount = total_balance * 0.2
     brk_momentum = momentum_scores.loc[target_date, "BRK-B"]
     selected_data.append({
         "자산": "BRK-B",
+        "신호 기준": "BRK-B",
         "모멘텀 점수": f"{brk_momentum:.3f}",
         "현재 가격": f"${brk_price:.2f}",
         "구매 수량": f"{brk_shares:.2f}",
@@ -183,6 +226,7 @@ def display_results(
         "selected_data": selected_data,
         "momentum_scores": momentum_scores,
         "data": data,
+        "pricing_data": pricing_data,
         "tickers": tickers,
         "selected_assets": selected_assets,
         "haa_bal": haa_bal,
@@ -191,11 +235,13 @@ def display_results(
         "rebalancing_history": rebalancing_history,
         "performance_metrics": performance_metrics,
         "recent_rebalancing": recent_rebalancing,
-        "analysis_data": analysis_data
+        "analysis_data": analysis_data,
+        "sp500_rebalance_ticker": sp500_rebalance_ticker
     }
 
     # ==== 아래쪽: 전체 자산군 테이블 생성 ====
     st.subheader("📈 전체 자산군 분석")
+    st.caption(f"리밸런싱 실행 ETF: {sp500_rebalance_ticker} / 신호·백테스트 기준: SPY")
     recent = data.loc[target_date]
     df = pd.DataFrame({
         "Recent Price": recent,
@@ -211,36 +257,33 @@ def display_results(
     off_idx = ["SPY", "VEA", "VWO", "IWM", "TLT", "PDBC", "VNQ", "IEF"]
     def_idx = ["IEF", "BIL"]
 
-    # Rank 컬럼 초기화
     df["Rank"] = ""
 
-    # 공격군 중 상위 4개
     for i, t in enumerate(df.loc[off_idx].nlargest(4, "Momentum Score").index, 1):
         df.loc[t, "Rank"] = f"공격{i}위"
 
-    # 방어군 중 상위 1개
     for i, t in enumerate(df.loc[def_idx].nlargest(1, "Momentum Score").index, 1):
         df.loc[t, "Rank"] = f"방어{i}위"
 
-    # TIP: 공격/대피 로직
     tip_val = momentum_scores.loc[target_date, "TIP"]
     df.loc["TIP", "Rank"] = "공격" if tip_val >= 0 else "대피"
-
-    # BRK-B: 항상 보유
     df.loc["BRK-B", "Rank"] = "보유"
 
     # ---- 구매 수량 계산 ----
     df["Shares to Buy"] = ""
     for asset, _ in selected_assets:
-        price = recent[asset]
+        price = get_price_with_fallback(pricing_data, data, target_date, asset, sp500_rebalance_ticker)
         shares = haa_bal / len(selected_assets) / price
         df.loc[asset, "Shares to Buy"] = f"{shares:.2f}"
     df.loc["BRK-B", "Shares to Buy"] = f"{brk_shares:.2f}"
 
-    # 컬럼 순서 재정렬
-    df = df[["Rank", "Recent Price", "Momentum Score", "1M (%)", "3M (%)", "6M (%)", "12M (%)", "Shares to Buy"]]
+    # SPY 선택 시 실행 티커 안내용 컬럼 추가
+    df["Execution Ticker"] = ""
+    df.loc["SPY", "Execution Ticker"] = sp500_rebalance_ticker
+    df.loc["BRK-B", "Execution Ticker"] = "BRK-B"
 
-    # 숫자 포맷팅
+    df = df[["Rank", "Execution Ticker", "Recent Price", "Momentum Score", "1M (%)", "3M (%)", "6M (%)", "12M (%)", "Shares to Buy"]]
+
     df["Recent Price"] = df["Recent Price"].apply(lambda x: f"${x:,.2f}")
     df["Momentum Score"] = df["Momentum Score"].apply(lambda x: f"{x:.3f}")
     for col in ["1M (%)", "3M (%)", "6M (%)", "12M (%)"]:
@@ -636,6 +679,7 @@ def get_asset_full_name(ticker: str) -> str:
     """티커의 전체 이름 반환"""
     asset_names = {
         "SPY": "SPDR S&P 500 ETF Trust",
+        "SPYM": "SPDR Portfolio S&P 500 High Dividend ETF",
         "VEA": "Vanguard FTSE Developed Markets ETF",
         "VWO": "Vanguard FTSE Emerging Markets ETF",
         "IWM": "iShares Russell 2000 ETF",
@@ -789,17 +833,22 @@ def render_holdings_manager(tickers: list):
         )
 
 
-def get_recent_rebalancing_history(data: pd.DataFrame, momentum_scores: pd.DataFrame, months: int = 12):
-    """최근 N개월 리밸런싱 내역 추출"""
-    # 현재 날짜 기준으로 과거 N개월
+def get_recent_rebalancing_history(
+    data: pd.DataFrame,
+    momentum_scores: pd.DataFrame,
+    months: int = 12,
+    sp500_rebalance_ticker: str = "SPY"
+):
+    """최근 N개월 리밸런싱 내역 추출
+    - 신호 계산은 SPY 기준
+    - 표시용 티커만 SPY/SPYM 선택을 반영
+    """
     end_date = pd.Timestamp.now().normalize()
     start_date = end_date - pd.DateOffset(months=months)
 
-    # 월말 날짜 추출
     monthly_dates = data.resample(MonthEnd()).last().index
     monthly_dates = monthly_dates[(monthly_dates >= start_date) & (monthly_dates <= end_date)]
 
-    # 현재 날짜가 포함된 월의 마지막 거래일도 추가
     current_month_end = data.resample(MonthEnd()).last().index[-1] if len(data) > 0 else None
     if current_month_end is not None and current_month_end not in monthly_dates and current_month_end >= start_date:
         monthly_dates = pd.Index(list(monthly_dates) + [current_month_end]).sort_values()
@@ -810,7 +859,6 @@ def get_recent_rebalancing_history(data: pd.DataFrame, momentum_scores: pd.DataF
     rebalancing_history = []
 
     for date in monthly_dates:
-        # momentum_scores에 없으면 가장 가까운 이전 날짜 사용
         target_date = date
         if target_date not in momentum_scores.index:
             available_dates = momentum_scores.index[momentum_scores.index <= target_date]
@@ -821,13 +869,13 @@ def get_recent_rebalancing_history(data: pd.DataFrame, momentum_scores: pd.DataF
 
         selected_assets, _ = select_assets(momentum_scores, data, target_date)
 
-        # 비중 계산 및 순위 표시
         haa_assets = len(selected_assets)
         if haa_assets > 0:
             haa_weight_per_asset = 0.8 / haa_assets
             asset_weights = []
             for rank, (asset, score) in enumerate(selected_assets, 1):
-                asset_weights.append(f"{asset}({haa_weight_per_asset*100:.0f}% {rank}위)")
+                display_asset = format_selected_asset_label(asset, sp500_rebalance_ticker)
+                asset_weights.append(f"{display_asset}({haa_weight_per_asset*100:.0f}% {rank}위)")
             asset_weights.append("BRK-B(20% 보유)")
             asset_str = ", ".join(asset_weights)
         else:
@@ -838,10 +886,9 @@ def get_recent_rebalancing_history(data: pd.DataFrame, momentum_scores: pd.DataF
             "목표 자산 비중": asset_str
         })
 
-    # 최신순으로 정렬
     rebalancing_history.reverse()
-
     return rebalancing_history
+
 
 
 # ==== Streamlit 앱 메인 ====
@@ -853,7 +900,6 @@ st.set_page_config(
 
 st.title("📊 HAA 전략 스크리너")
 st.markdown("---")
-APP_TICKERS = ["SPY", "VEA", "VWO", "IWM", "BIL", "IEF", "TLT", "TIP", "PDBC", "VNQ", "BRK-B"]
 
 # 브라우저 localStorage에 보관된 보유수량 자동 복원
 _inject_localstorage_restore_script()
@@ -864,6 +910,12 @@ with st.sidebar:
     st.header("⚙️ 설정")
     render_holdings_manager(APP_TICKERS)
     st.markdown("---")
+    sp500_rebalance_ticker = st.selectbox(
+        "S&P500 리밸런싱 ETF 선택",
+        SP500_REBALANCE_OPTIONS,
+        index=0,
+        help="실제 매수 추천 수량은 SPY 또는 SPYM 중 선택한 티커 기준으로 계산합니다. 백테스트와 모멘텀 신호는 항상 SPY 기준입니다."
+    )
     balance_text = st.text_input(
         "보유 금액 입력",
         value="10000",
@@ -876,9 +928,10 @@ with st.sidebar:
             if total_balance <= 0:
                 st.error("보유 금액은 0보다 커야 합니다.")
             else:
-                result_data = run_screener(total_balance)
+                result_data = run_screener(total_balance, sp500_rebalance_ticker=sp500_rebalance_ticker)
                 st.session_state["result_data"] = result_data
                 st.session_state["balance"] = total_balance
+                st.session_state["sp500_rebalance_ticker"] = sp500_rebalance_ticker
         except ValueError:
             st.error("올바른 숫자를 입력해주세요.")
         except Exception as e:
@@ -898,6 +951,7 @@ with st.sidebar:
         result_data = st.session_state["result_data"]
         st.metric("기준 날짜", result_data["target_date"].strftime("%Y-%m-%d"))
         st.metric("보유 금액", f"${result_data['total_balance']:,.2f}")
+        st.caption(f"리밸런싱 ETF: {result_data.get('sp500_rebalance_ticker', 'SPY')} / 백테스트 기준: SPY")
 
         st.markdown("---")
         st.subheader("✅ 선택된 자산")
@@ -915,6 +969,7 @@ if "result_data" in st.session_state:
         st.metric("기준 날짜", result_data["target_date"].strftime("%Y-%m-%d"))
     with col2:
         st.metric("보유 금액", f"${result_data['total_balance']:,.2f}")
+    st.caption(f"리밸런싱 ETF: {result_data.get('sp500_rebalance_ticker', 'SPY')} / 백테스트·신호 기준: SPY")
 
     st.markdown("---")
 
@@ -931,7 +986,7 @@ if "result_data" in st.session_state:
     # ==== 현재 보유 포지션 평가 ====
     st.subheader("📦 현재 보유 포지션")
     holdings = st.session_state.get("holdings", {})
-    price_snapshot = result_data["data"].loc[result_data["target_date"]]
+    price_snapshot = result_data["pricing_data"].loc[result_data["target_date"]]
     holding_rows = []
     for t, qty in holdings.items():
         if qty > 0 and t in price_snapshot.index:
@@ -1020,7 +1075,7 @@ if "result_data" in st.session_state:
             if haa_assets > 0:
                 haa_weight_per_asset = 0.8 / haa_assets
                 values = [haa_weight_per_asset * 100] * haa_assets
-                labels = [asset for asset, _ in current_selected_assets]
+                labels = [format_selected_asset_label(asset, result_data.get("sp500_rebalance_ticker", "SPY")) for asset, _ in current_selected_assets]
             else:
                 values = []
                 labels = []
