@@ -14,6 +14,7 @@ import streamlit.components.v1 as components
 STRATEGY_TICKERS = ["SPY", "VEA", "VWO", "IWM", "BIL", "IEF", "TLT", "TIP", "PDBC", "VNQ", "BRK-B"]
 APP_TICKERS = STRATEGY_TICKERS + ["SPYM"]
 SP500_REBALANCE_OPTIONS = ["SPY", "SPYM"]
+MOMENTUM_PERIODS = (1, 3, 6, 12)
 
 
 def get_rebalance_ticker(asset: str, sp500_rebalance_ticker: str) -> str:
@@ -23,13 +24,17 @@ def get_rebalance_ticker(asset: str, sp500_rebalance_ticker: str) -> str:
 
 def get_price_with_fallback(pricing_data: pd.DataFrame, strategy_data: pd.DataFrame, target_date: pd.Timestamp,
                             asset: str, sp500_rebalance_ticker: str) -> float:
-    """실행용 티커 가격을 우선 사용하고, 없으면 전략 티커 가격으로 대체"""
+    """가장 최근 실행용 티커 가격을 사용하고, 없으면 전략 티커 가격으로 대체."""
     exec_ticker = get_rebalance_ticker(asset, sp500_rebalance_ticker)
-    if exec_ticker in pricing_data.columns and target_date in pricing_data.index:
-        px = pricing_data.loc[target_date, exec_ticker]
-        if not pd.isna(px):
-            return float(px)
-    return float(strategy_data.loc[target_date, asset])
+    if exec_ticker in pricing_data.columns:
+        prices = pricing_data[exec_ticker].dropna()
+        if not prices.empty:
+            return float(prices.iloc[-1])
+
+    prices = strategy_data[asset].dropna()
+    if prices.empty:
+        raise ValueError(f"{exec_ticker} 가격 데이터가 없습니다.")
+    return float(prices.iloc[-1])
 
 
 def format_selected_asset_label(asset: str, sp500_rebalance_ticker: str) -> str:
@@ -37,23 +42,38 @@ def format_selected_asset_label(asset: str, sp500_rebalance_ticker: str) -> str:
     return get_rebalance_ticker(asset, sp500_rebalance_ticker)
 
 
-def calculate_momentum_scores(data: pd.DataFrame) -> pd.DataFrame:
-    """모멘텀 점수 계산"""
-    aligned_returns = []
-    # 1개월, 3개월, 6개월, 12개월을 각각 약 21, 63, 126, 252 거래일로 계산
-    for months in [1, 3, 6, 12]:
-        returns = data.pct_change(periods=months * 21)
-        # 컬럼을 MultiIndex(티커, 기간) 형태로 변경
-        returns.columns = pd.MultiIndex.from_tuples(
-            [(col, f"{months}M") for col in data.columns],
-            names=["Ticker", "Period"]
-        )
-        aligned_returns.append(returns)
+def get_last_completed_month_end(as_of: pd.Timestamp = None) -> pd.Timestamp:
+    """아직 진행 중인 달을 제외한 가장 최근 달의 말일을 반환."""
+    as_of = pd.Timestamp.now() if as_of is None else pd.Timestamp(as_of)
+    as_of = as_of.tz_localize(None) if as_of.tzinfo is not None else as_of
+    return as_of.normalize().replace(day=1) - pd.Timedelta(days=1)
 
-    # 네 개의 수익률 테이블을 가로로 붙임
-    aligned_data = pd.concat(aligned_returns, axis=1)
-    # 티커별 수익률 평균 = 모멘텀 점수
-    return aligned_data.T.groupby(level="Ticker").mean().T
+
+def get_month_end_prices(data: pd.DataFrame) -> pd.DataFrame:
+    """일별 수정주가를 달력상 월말 라벨의 월말 종가로 변환."""
+    if data.empty:
+        return data.copy()
+    return data.sort_index().resample(MonthEnd()).last().dropna(how="all")
+
+
+def calculate_momentum_returns(data: pd.DataFrame) -> dict:
+    """HAA 13612U에 사용하는 월말 기준 1·3·6·12개월 총수익률."""
+    monthly_prices = get_month_end_prices(data)
+    return {
+        months: monthly_prices.pct_change(periods=months, fill_method=None)
+        for months in MOMENTUM_PERIODS
+    }
+
+
+def calculate_momentum_scores(data: pd.DataFrame) -> pd.DataFrame:
+    """완료된 월말 수정주가로 HAA 13612U 모멘텀 점수를 계산."""
+    period_returns = calculate_momentum_returns(data)
+    score = period_returns[MOMENTUM_PERIODS[0]].copy()
+    for months in MOMENTUM_PERIODS[1:]:
+        score = score.add(period_returns[months])
+
+    # 네 기간이 모두 존재하는 달만 유효한 신호로 사용한다.
+    return (score / len(MOMENTUM_PERIODS)).dropna(how="all")
 
 
 def select_assets(momentum_scores: pd.DataFrame, data: pd.DataFrame, target_date: pd.Timestamp = None):
@@ -113,6 +133,7 @@ def run_screener(total_balance: float, sp500_rebalance_ticker: str = "SPY"):
         )["Adj Close"]
         if isinstance(downloaded, pd.Series):
             downloaded = downloaded.to_frame()
+        downloaded.index = downloaded.index.tz_localize(None)
         pricing_data = downloaded.copy()
         pricing_data.index = pricing_data.index.tz_localize(None)
 
@@ -131,8 +152,12 @@ def run_screener(total_balance: float, sp500_rebalance_ticker: str = "SPY"):
             pricing_data.loc[today] = pd.Series(fast_prices)
             pricing_data.sort_index(inplace=True)
 
-        # 3) 전략용 데이터는 기존대로 SPY 기준만 사용
-        data = pricing_data[strategy_tickers].copy()
+        # 3) 신호에는 완료된 월의 수정주가만 사용한다.
+        # 장중/당월 가격은 매수 수량과 보유자산 평가에만 사용한다.
+        signal_cutoff = get_last_completed_month_end(today)
+        data = downloaded.loc[downloaded.index <= signal_cutoff, strategy_tickers].copy()
+        if data.empty:
+            raise ValueError("완료된 월말 가격 데이터가 없습니다.")
 
         # 4) 모멘텀 점수 계산
         momentum_scores = calculate_momentum_scores(data)
@@ -206,7 +231,7 @@ def display_results(
         })
 
     # BRK-B 모멘텀 점수 계산
-    brk_price = float(pricing_data.loc[target_date, "BRK-B"]) if "BRK-B" in pricing_data.columns else float(data.loc[target_date, "BRK-B"])
+    brk_price = get_price_with_fallback(pricing_data, data, target_date, "BRK-B", sp500_rebalance_ticker)
     brk_shares = total_balance * 0.2 / brk_price
     brk_purchase_amount = total_balance * 0.2
     brk_momentum = momentum_scores.loc[target_date, "BRK-B"]
@@ -222,6 +247,7 @@ def display_results(
     # 반환할 데이터 준비
     result_data = {
         "target_date": target_date,
+        "price_date": pricing_data.index[-1],
         "total_balance": total_balance,
         "selected_data": selected_data,
         "momentum_scores": momentum_scores,
@@ -242,14 +268,16 @@ def display_results(
     # ==== 아래쪽: 전체 자산군 테이블 생성 ====
     st.subheader("📈 전체 자산군 분석")
     st.caption(f"리밸런싱 실행 ETF: {sp500_rebalance_ticker} / 신호·백테스트 기준: SPY")
-    recent = data.loc[target_date]
+    monthly_prices = get_month_end_prices(data)
+    period_returns = calculate_momentum_returns(data)
+    recent = monthly_prices.loc[target_date]
     df = pd.DataFrame({
-        "Recent Price": recent,
+        "Signal Close": recent,
         "Momentum Score": momentum_scores.loc[target_date],
-        "1M (%)": data.pct_change(21).loc[target_date] * 100,
-        "3M (%)": data.pct_change(63).loc[target_date] * 100,
-        "6M (%)": data.pct_change(126).loc[target_date] * 100,
-        "12M (%)": data.pct_change(252).loc[target_date] * 100,
+        "1M (%)": period_returns[1].loc[target_date] * 100,
+        "3M (%)": period_returns[3].loc[target_date] * 100,
+        "6M (%)": period_returns[6].loc[target_date] * 100,
+        "12M (%)": period_returns[12].loc[target_date] * 100,
     })
     df = df.loc[tickers]
 
@@ -282,9 +310,9 @@ def display_results(
     df.loc["SPY", "Execution Ticker"] = sp500_rebalance_ticker
     df.loc["BRK-B", "Execution Ticker"] = "BRK-B"
 
-    df = df[["Rank", "Execution Ticker", "Recent Price", "Momentum Score", "1M (%)", "3M (%)", "6M (%)", "12M (%)", "Shares to Buy"]]
+    df = df[["Rank", "Execution Ticker", "Signal Close", "Momentum Score", "1M (%)", "3M (%)", "6M (%)", "12M (%)", "Shares to Buy"]]
 
-    df["Recent Price"] = df["Recent Price"].apply(lambda x: f"${x:,.2f}")
+    df["Signal Close"] = df["Signal Close"].apply(lambda x: f"${x:,.2f}")
     df["Momentum Score"] = df["Momentum Score"].apply(lambda x: f"{x:.3f}")
     for col in ["1M (%)", "3M (%)", "6M (%)", "12M (%)"]:
         df[col] = df[col].apply(lambda x: f"{x:.2f}%")
@@ -343,7 +371,9 @@ def run_backtest(data: pd.DataFrame, momentum_scores: pd.DataFrame, initial_bala
 
             # 이전 달 말에 선택된 자산
             try:
-                selected_assets, _ = select_assets(momentum_scores, data_filtered, prev_date_actual)
+                # 모멘텀 인덱스는 달력상 월말 라벨이므로 실제 마지막 거래일이
+                # 그보다 이르더라도 해당 월의 신호(prev_date)를 사용한다.
+                selected_assets, _ = select_assets(momentum_scores, data_filtered, prev_date)
             except Exception as e:
                 st.warning(f"날짜 {prev_date_actual}에서 자산 선택 실패: {e}")
                 continue
@@ -843,15 +873,11 @@ def get_recent_rebalancing_history(
     - 신호 계산은 SPY 기준
     - 표시용 티커만 SPY/SPYM 선택을 반영
     """
-    end_date = pd.Timestamp.now().normalize()
+    end_date = get_last_completed_month_end()
     start_date = end_date - pd.DateOffset(months=months)
 
-    monthly_dates = data.resample(MonthEnd()).last().index
+    monthly_dates = momentum_scores.index
     monthly_dates = monthly_dates[(monthly_dates >= start_date) & (monthly_dates <= end_date)]
-
-    current_month_end = data.resample(MonthEnd()).last().index[-1] if len(data) > 0 else None
-    if current_month_end is not None and current_month_end not in monthly_dates and current_month_end >= start_date:
-        monthly_dates = pd.Index(list(monthly_dates) + [current_month_end]).sort_values()
 
     if len(monthly_dates) == 0:
         return []
@@ -949,9 +975,10 @@ with st.sidebar:
         st.markdown("---")
         st.subheader("📊 설정 정보")
         result_data = st.session_state["result_data"]
-        st.metric("기준 날짜", result_data["target_date"].strftime("%Y-%m-%d"))
+        st.metric("신호 기준 월말", result_data["target_date"].strftime("%Y-%m-%d"))
         st.metric("보유 금액", f"${result_data['total_balance']:,.2f}")
         st.caption(f"리밸런싱 ETF: {result_data.get('sp500_rebalance_ticker', 'SPY')} / 백테스트 기준: SPY")
+        st.caption("모멘텀은 완료된 월말 수정주가만 사용하며, 실시간 가격은 매수 수량·평가에만 반영합니다.")
 
         st.markdown("---")
         st.subheader("✅ 선택된 자산")
@@ -966,10 +993,11 @@ if "result_data" in st.session_state:
     st.subheader("📊 설정 정보")
     col1, col2 = st.columns(2)
     with col1:
-        st.metric("기준 날짜", result_data["target_date"].strftime("%Y-%m-%d"))
+        st.metric("신호 기준 월말", result_data["target_date"].strftime("%Y-%m-%d"))
     with col2:
         st.metric("보유 금액", f"${result_data['total_balance']:,.2f}")
     st.caption(f"리밸런싱 ETF: {result_data.get('sp500_rebalance_ticker', 'SPY')} / 백테스트·신호 기준: SPY")
+    st.caption("13612U 신호: 완료된 월말 수정주가 기준 / 현재 가격: 매수 수량·보유 평가에만 사용")
 
     st.markdown("---")
 
@@ -986,7 +1014,7 @@ if "result_data" in st.session_state:
     # ==== 현재 보유 포지션 평가 ====
     st.subheader("📦 현재 보유 포지션")
     holdings = st.session_state.get("holdings", {})
-    price_snapshot = result_data["pricing_data"].loc[result_data["target_date"]]
+    price_snapshot = result_data["pricing_data"].ffill().iloc[-1]
     holding_rows = []
     for t, qty in holdings.items():
         if qty > 0 and t in price_snapshot.index:
