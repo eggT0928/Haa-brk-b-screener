@@ -76,6 +76,58 @@ def calculate_momentum_scores(data: pd.DataFrame) -> pd.DataFrame:
     return (score / len(MOMENTUM_PERIODS)).dropna(how="all")
 
 
+def calculate_preview_momentum(data: pd.DataFrame, as_of: pd.Timestamp = None):
+    """현재 가격을 당월의 가상 월말 가격으로 사용한 다음 리밸런싱 예상 신호.
+
+    21·63·126·252 거래일 근사값을 사용하지 않고, 당월 월말 라벨에서
+    정확히 1·3·6·12개월 전의 월말 수정주가를 비교 기준으로 사용한다.
+    실제 월말이 끝나면 이 값은 새 확정 월말 신호와 일치한다.
+    """
+    if data.empty:
+        raise ValueError("예상 신호를 계산할 가격 데이터가 없습니다.")
+
+    clean = data.sort_index().copy()
+    clean.index = pd.to_datetime(clean.index).tz_localize(None)
+    requested_date = clean.index[-1] if as_of is None else pd.Timestamp(as_of)
+    requested_date = requested_date.tz_localize(None) if requested_date.tzinfo is not None else requested_date
+    available = clean.loc[clean.index <= requested_date].dropna(how="all")
+    if available.empty:
+        raise ValueError("예상 기준일 이전의 가격 데이터가 없습니다.")
+
+    preview_date = available.index[-1]
+    preview_month_end = preview_date + MonthEnd(0)
+    monthly_prices = get_month_end_prices(available)
+    current_prices = monthly_prices.loc[preview_month_end]
+
+    period_returns = {}
+    for months in MOMENTUM_PERIODS:
+        base_month_end = preview_month_end - pd.DateOffset(months=months)
+        if base_month_end not in monthly_prices.index:
+            raise ValueError(f"{months}개월 예상 신호 기준 월말 데이터가 없습니다.")
+        period_returns[months] = current_prices / monthly_prices.loc[base_month_end] - 1
+
+    period_frame = pd.DataFrame(period_returns)
+    preview_scores = period_frame.mean(axis=1, skipna=False)
+    return period_returns, preview_scores, preview_date, preview_month_end
+
+
+def build_rank_labels(scores: pd.Series) -> pd.Series:
+    """확정·예상 점수를 같은 규칙으로 비교하기 위한 표시용 순위."""
+    labels = pd.Series("", index=scores.index, dtype=object)
+    offense = ["SPY", "VEA", "VWO", "IWM", "TLT", "PDBC", "VNQ", "IEF"]
+    defense = ["IEF", "BIL"]
+
+    for i, ticker in enumerate(scores[offense].nlargest(4).index, 1):
+        labels.loc[ticker] = f"공격{i}위"
+    for i, ticker in enumerate(scores[defense].nlargest(1).index, 1):
+        labels.loc[ticker] = f"방어{i}위"
+
+    labels.loc["TIP"] = "공격" if scores.get("TIP", 0) > 0 else "대피"
+    if "BRK-B" in labels.index:
+        labels.loc["BRK-B"] = "보유"
+    return labels
+
+
 def select_assets(momentum_scores: pd.DataFrame, data: pd.DataFrame, target_date: pd.Timestamp = None):
     """TIP 기준으로 자산 선택 (offense/defense)"""
     # target_date가 없으면 가장 마지막 인덱스를 사용
@@ -165,6 +217,18 @@ def run_screener(total_balance: float, sp500_rebalance_ticker: str = "SPY"):
         # 5) TIP 기준 자산 선택 (offense/defense) 및 target_date 결정
         selected_assets, target_date = select_assets(momentum_scores, data)
 
+        # 현재 가격을 당월 가상 월말 가격으로 사용한 다음 리밸런싱 예상 신호.
+        # 실제 추천과 백테스트에는 사용하지 않고 화면 비교용으로만 전달한다.
+        preview_data = pricing_data[strategy_tickers].copy()
+        preview_returns, preview_scores, preview_date, preview_month_end = calculate_preview_momentum(
+            preview_data, today
+        )
+        preview_score_frame = preview_scores.to_frame().T
+        preview_score_frame.index = pd.DatetimeIndex([preview_month_end])
+        preview_selected_assets, _ = select_assets(
+            preview_score_frame, preview_data, preview_month_end
+        )
+
         # 6) 백테스트 실행 (항상 SPY 기준)
         portfolio_value, rebalancing_history, performance_metrics, analysis_data = run_backtest(
             data, momentum_scores, total_balance
@@ -184,6 +248,11 @@ def run_screener(total_balance: float, sp500_rebalance_ticker: str = "SPY"):
             strategy_tickers,
             total_balance,
             target_date,
+            preview_returns,
+            preview_scores,
+            preview_selected_assets,
+            preview_date,
+            preview_month_end,
             portfolio_value,
             rebalancing_history,
             performance_metrics,
@@ -201,6 +270,11 @@ def display_results(
     tickers: list,
     total_balance: float,
     target_date: pd.Timestamp,
+    preview_returns: dict,
+    preview_scores: pd.Series,
+    preview_selected_assets: list,
+    preview_date: pd.Timestamp,
+    preview_month_end: pd.Timestamp,
     portfolio_value: pd.Series = None,
     rebalancing_history: list = None,
     performance_metrics: dict = None,
@@ -244,13 +318,50 @@ def display_results(
         "구매 금액": f"${brk_purchase_amount:,.2f}"
     })
 
+    # 예상 신호는 실제 매수 지시가 아닌 다음 월말 리밸런싱 참고용이다.
+    preview_selected_data = []
+    preview_haa_weight = 0.8 / len(preview_selected_assets) if preview_selected_assets else 0
+    for asset, score in preview_selected_assets:
+        preview_selected_data.append({
+            "예상 자산": format_selected_asset_label(asset, sp500_rebalance_ticker),
+            "신호 기준": asset,
+            "예상 모멘텀": f"{score:.3f}",
+            "예상 비중": f"{preview_haa_weight * 100:.0f}%"
+        })
+    preview_selected_data.append({
+        "예상 자산": "BRK-B",
+        "신호 기준": "BRK-B",
+        "예상 모멘텀": f"{preview_scores['BRK-B']:.3f}",
+        "예상 비중": "20%"
+    })
+
+    official_names = [format_selected_asset_label(a, sp500_rebalance_ticker) for a, _ in selected_assets]
+    preview_names = [format_selected_asset_label(a, sp500_rebalance_ticker) for a, _ in preview_selected_assets]
+    added = [asset for asset in preview_names if asset not in official_names]
+    removed = [asset for asset in official_names if asset not in preview_names]
+    if not added and not removed:
+        preview_change_summary = "현재 확정 구성과 예상 구성이 같습니다."
+    else:
+        changes = []
+        if added:
+            changes.append(f"편입 예상: {', '.join(added)}")
+        if removed:
+            changes.append(f"제외 예상: {', '.join(removed)}")
+        preview_change_summary = " / ".join(changes)
+
     # 반환할 데이터 준비
     result_data = {
         "target_date": target_date,
         "price_date": pricing_data.index[-1],
+        "preview_date": preview_date,
+        "preview_month_end": preview_month_end,
         "total_balance": total_balance,
         "selected_data": selected_data,
+        "preview_selected_data": preview_selected_data,
+        "preview_change_summary": preview_change_summary,
         "momentum_scores": momentum_scores,
+        "preview_scores": preview_scores,
+        "preview_returns": preview_returns,
         "data": data,
         "pricing_data": pricing_data,
         "tickers": tickers,
@@ -271,53 +382,70 @@ def display_results(
     monthly_prices = get_month_end_prices(data)
     period_returns = calculate_momentum_returns(data)
     recent = monthly_prices.loc[target_date]
-    df = pd.DataFrame({
-        "Signal Close": recent,
-        "Momentum Score": momentum_scores.loc[target_date],
+    official_scores = momentum_scores.loc[target_date]
+    official_ranks = build_rank_labels(official_scores)
+    preview_ranks = build_rank_labels(preview_scores)
+    current_prices = pricing_data[tickers].ffill().iloc[-1]
+
+    official_df = pd.DataFrame({
+        "확정 순위": official_ranks,
+        "월말 기준가": recent,
+        "확정 모멘텀": official_scores,
         "1M (%)": period_returns[1].loc[target_date] * 100,
         "3M (%)": period_returns[3].loc[target_date] * 100,
         "6M (%)": period_returns[6].loc[target_date] * 100,
         "12M (%)": period_returns[12].loc[target_date] * 100,
-    })
-    df = df.loc[tickers]
+    }).loc[tickers]
 
-    # ---- 순위 설정 ----
-    off_idx = ["SPY", "VEA", "VWO", "IWM", "TLT", "PDBC", "VNQ", "IEF"]
-    def_idx = ["IEF", "BIL"]
+    preview_df = pd.DataFrame({
+        "예상 순위": preview_ranks,
+        "현재가": current_prices,
+        "예상 모멘텀": preview_scores,
+        "1M 예상 (%)": preview_returns[1] * 100,
+        "3M 예상 (%)": preview_returns[3] * 100,
+        "6M 예상 (%)": preview_returns[6] * 100,
+        "12M 예상 (%)": preview_returns[12] * 100,
+    }).loc[tickers]
 
-    df["Rank"] = ""
-
-    for i, t in enumerate(df.loc[off_idx].nlargest(4, "Momentum Score").index, 1):
-        df.loc[t, "Rank"] = f"공격{i}위"
-
-    for i, t in enumerate(df.loc[def_idx].nlargest(1, "Momentum Score").index, 1):
-        df.loc[t, "Rank"] = f"방어{i}위"
-
-    tip_val = momentum_scores.loc[target_date, "TIP"]
-    df.loc["TIP", "Rank"] = "공격" if tip_val >= 0 else "대피"
-    df.loc["BRK-B", "Rank"] = "보유"
+    df = pd.DataFrame({
+        "확정 순위": official_ranks,
+        "예상 순위": preview_ranks,
+        "확정 모멘텀": official_scores,
+        "예상 모멘텀": preview_scores,
+        "점수 변화": preview_scores - official_scores,
+    }).loc[tickers]
+    df["구성 변화"] = np.where(df["확정 순위"] == df["예상 순위"], "-", "변경")
 
     # ---- 구매 수량 계산 ----
-    df["Shares to Buy"] = ""
+    df["구매 수량"] = ""
     for asset, _ in selected_assets:
         price = get_price_with_fallback(pricing_data, data, target_date, asset, sp500_rebalance_ticker)
         shares = haa_bal / len(selected_assets) / price
-        df.loc[asset, "Shares to Buy"] = f"{shares:.2f}"
-    df.loc["BRK-B", "Shares to Buy"] = f"{brk_shares:.2f}"
+        df.loc[asset, "구매 수량"] = f"{shares:.2f}"
+    df.loc["BRK-B", "구매 수량"] = f"{brk_shares:.2f}"
 
     # SPY 선택 시 실행 티커 안내용 컬럼 추가
-    df["Execution Ticker"] = ""
-    df.loc["SPY", "Execution Ticker"] = sp500_rebalance_ticker
-    df.loc["BRK-B", "Execution Ticker"] = "BRK-B"
+    df["실행 티커"] = ""
+    df.loc["SPY", "실행 티커"] = sp500_rebalance_ticker
+    df.loc["BRK-B", "실행 티커"] = "BRK-B"
+    df = df[["확정 순위", "예상 순위", "실행 티커", "확정 모멘텀", "예상 모멘텀", "점수 변화", "구성 변화", "구매 수량"]]
 
-    df = df[["Rank", "Execution Ticker", "Signal Close", "Momentum Score", "1M (%)", "3M (%)", "6M (%)", "12M (%)", "Shares to Buy"]]
+    for col in ["확정 모멘텀", "예상 모멘텀", "점수 변화"]:
+        df[col] = df[col].apply(lambda x: f"{x:.3f}")
 
-    df["Signal Close"] = df["Signal Close"].apply(lambda x: f"${x:,.2f}")
-    df["Momentum Score"] = df["Momentum Score"].apply(lambda x: f"{x:.3f}")
+    official_df["월말 기준가"] = official_df["월말 기준가"].apply(lambda x: f"${x:,.2f}")
+    official_df["확정 모멘텀"] = official_df["확정 모멘텀"].apply(lambda x: f"{x:.3f}")
     for col in ["1M (%)", "3M (%)", "6M (%)", "12M (%)"]:
-        df[col] = df[col].apply(lambda x: f"{x:.2f}%")
+        official_df[col] = official_df[col].apply(lambda x: f"{x:.2f}%")
+
+    preview_df["현재가"] = preview_df["현재가"].apply(lambda x: f"${x:,.2f}")
+    preview_df["예상 모멘텀"] = preview_df["예상 모멘텀"].apply(lambda x: f"{x:.3f}")
+    for col in ["1M 예상 (%)", "3M 예상 (%)", "6M 예상 (%)", "12M 예상 (%)"]:
+        preview_df[col] = preview_df[col].apply(lambda x: f"{x:.2f}%")
 
     result_data["df"] = df
+    result_data["official_detail_df"] = official_df
+    result_data["preview_detail_df"] = preview_df
     return result_data
 
 
@@ -975,15 +1103,24 @@ with st.sidebar:
         st.markdown("---")
         st.subheader("📊 설정 정보")
         result_data = st.session_state["result_data"]
-        st.metric("신호 기준 월말", result_data["target_date"].strftime("%Y-%m-%d"))
+        st.metric("확정 신호 월말", result_data["target_date"].strftime("%Y-%m-%d"))
+        st.metric("예상 신호 현재가", result_data["preview_date"].strftime("%Y-%m-%d"))
         st.metric("보유 금액", f"${result_data['total_balance']:,.2f}")
         st.caption(f"리밸런싱 ETF: {result_data.get('sp500_rebalance_ticker', 'SPY')} / 백테스트 기준: SPY")
-        st.caption("모멘텀은 완료된 월말 수정주가만 사용하며, 실시간 가격은 매수 수량·평가에만 반영합니다.")
+        st.caption("실제 추천은 완료된 월말 신호, 예상 신호는 현재가를 당월 가상 월말 가격으로 사용합니다.")
 
         st.markdown("---")
         st.subheader("✅ 선택된 자산")
         selected_df = pd.DataFrame(result_data["selected_data"])
         st.dataframe(selected_df, use_container_width=True, hide_index=True)
+
+        st.subheader("🔭 다음 월말 예상")
+        st.caption(result_data["preview_change_summary"])
+        st.dataframe(
+            pd.DataFrame(result_data["preview_selected_data"]),
+            use_container_width=True,
+            hide_index=True
+        )
 
 # 메인 영역에 결과 표시
 if "result_data" in st.session_state:
@@ -991,23 +1128,40 @@ if "result_data" in st.session_state:
 
     # ==== 본문에 기준 날짜와 투자 금액 표시 ====
     st.subheader("📊 설정 정보")
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric("신호 기준 월말", result_data["target_date"].strftime("%Y-%m-%d"))
+        st.metric("확정 신호 월말", result_data["target_date"].strftime("%Y-%m-%d"))
     with col2:
+        st.metric("예상 신호 현재가", result_data["preview_date"].strftime("%Y-%m-%d"))
+    with col3:
         st.metric("보유 금액", f"${result_data['total_balance']:,.2f}")
     st.caption(f"리밸런싱 ETF: {result_data.get('sp500_rebalance_ticker', 'SPY')} / 백테스트·신호 기준: SPY")
-    st.caption("13612U 신호: 완료된 월말 수정주가 기준 / 현재 가격: 매수 수량·보유 평가에만 사용")
+    st.caption(
+        f"확정 신호: {result_data['target_date']:%Y-%m-%d} 완료 월말 / "
+        f"예상 신호: {result_data['preview_date']:%Y-%m-%d} 현재가를 "
+        f"{result_data['preview_month_end']:%Y-%m-%d} 가상 월말 가격으로 사용"
+    )
+    st.info("예상 신호는 참고용이며 월말 종가가 확정될 때까지 변경될 수 있습니다.")
 
     st.markdown("---")
 
-    # ==== 선택된 자산 표시 ====
-    st.subheader("✅ 선택된 자산")
-    st.dataframe(
-        pd.DataFrame(result_data["selected_data"]),
-        use_container_width=True,
-        hide_index=True
-    )
+    # ==== 확정 자산과 다음 월말 예상 자산 병기 ====
+    official_col, preview_col = st.columns(2)
+    with official_col:
+        st.subheader("✅ 현재 확정 자산")
+        st.dataframe(
+            pd.DataFrame(result_data["selected_data"]),
+            use_container_width=True,
+            hide_index=True
+        )
+    with preview_col:
+        st.subheader("🔭 다음 월말 예상 자산")
+        st.caption(result_data["preview_change_summary"])
+        st.dataframe(
+            pd.DataFrame(result_data["preview_selected_data"]),
+            use_container_width=True,
+            hide_index=True
+        )
 
     st.markdown("---")
 
@@ -1048,11 +1202,23 @@ if "result_data" in st.session_state:
 
     # ==== 전체 자산군 분석 테이블 ====
     st.subheader("📈 전체 자산군 분석")
+    st.caption("구매 수량은 확정 신호에만 적용됩니다. 예상 순위와 예상 모멘텀은 참고용입니다.")
     st.dataframe(
         result_data["df"],
         use_container_width=True,
         height=400
     )
+
+    official_tab, preview_tab = st.tabs(["확정 월말 1·3·6·12개월", "현재가 기준 월말 예상"])
+    with official_tab:
+        st.caption(f"완료된 월말 {result_data['target_date']:%Y-%m-%d} 기준")
+        st.dataframe(result_data["official_detail_df"], use_container_width=True, height=400)
+    with preview_tab:
+        st.caption(
+            f"{result_data['preview_date']:%Y-%m-%d} 현재가를 "
+            f"{result_data['preview_month_end']:%Y-%m-%d} 월말 가격으로 가정"
+        )
+        st.dataframe(result_data["preview_detail_df"], use_container_width=True, height=400)
 
     # CSV 다운로드 버튼
     csv = result_data["df"].to_csv(index=True)
