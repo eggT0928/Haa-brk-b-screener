@@ -64,3 +64,41 @@ def test_rank_uses_month_end_scores_not_21_trading_day_approximations():
 
     assert target_date == dates[-1]
     assert [ticker for ticker, _ in selected] == ["PDBC", "IWM", "VEA", "VNQ"]
+
+
+def test_preview_uses_current_price_and_exact_prior_month_ends():
+    month_ends = pd.date_range("2025-08-31", "2026-07-31", freq="ME")
+    values = pd.Series(range(100, 100 + len(month_ends)), index=month_ends, dtype=float)
+    data = values.to_frame("SPY")
+    data.loc[pd.Timestamp("2026-08-12"), "SPY"] = 120.0
+    data.sort_index(inplace=True)
+
+    returns, scores, preview_date, preview_month_end = haa_app.calculate_preview_momentum(
+        data, "2026-08-12"
+    )
+
+    assert preview_date == pd.Timestamp("2026-08-12")
+    assert preview_month_end == pd.Timestamp("2026-08-31")
+    expected_returns = {
+        1: 120.0 / values.loc["2026-07-31"] - 1,
+        3: 120.0 / values.loc["2026-05-31"] - 1,
+        6: 120.0 / values.loc["2026-02-28"] - 1,
+        12: 120.0 / values.loc["2025-08-31"] - 1,
+    }
+    for months, expected in expected_returns.items():
+        assert returns[months]["SPY"] == pytest.approx(expected)
+    assert scores["SPY"] == pytest.approx(sum(expected_returns.values()) / 4)
+
+
+def test_preview_matches_official_signal_at_completed_month_end():
+    dates = pd.date_range("2025-08-31", periods=13, freq="ME")
+    data = pd.DataFrame({"SPY": range(100, 113)}, index=dates, dtype=float)
+
+    official = haa_app.calculate_momentum_scores(data).loc[dates[-1], "SPY"]
+    _, preview_scores, preview_date, preview_month_end = haa_app.calculate_preview_momentum(
+        data, dates[-1]
+    )
+
+    assert preview_date == dates[-1]
+    assert preview_month_end == dates[-1]
+    assert preview_scores["SPY"] == pytest.approx(official)
