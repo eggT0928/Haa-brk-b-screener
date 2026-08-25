@@ -140,3 +140,20 @@ def test_select_backtest_range_rejects_reversed_dates():
     with pytest.raises(ValueError, match="시작일"):
         haa_app.select_backtest_range(scores, "2020-03-01", "2020-01-01")
 
+
+def test_backtest_keeps_first_month_when_signal_month_end_is_weekend(monkeypatch):
+    # 2020-02-29는 토요일이므로 실제 마지막 거래일(2/28)이 포함되어야 한다.
+    dates = pd.to_datetime(["2020-02-28", "2020-03-31", "2020-04-30"])
+    data = pd.DataFrame(100.0, index=dates, columns=haa_app.STRATEGY_TICKERS)
+    data.loc[pd.Timestamp("2020-03-31")] = 101.0
+    data.loc[pd.Timestamp("2020-04-30")] = 102.0
+
+    signal_dates = pd.to_datetime(["2020-02-29", "2020-03-31", "2020-04-30"])
+    scores = pd.DataFrame(0.1, index=signal_dates, columns=haa_app.STRATEGY_TICKERS)
+
+    monkeypatch.setattr(haa_app, "get_risk_free_rate", lambda *args, **kwargs: 0.0)
+    portfolio_value, _, metrics, _ = haa_app.run_backtest(data, scores, 10000.0)
+
+    assert portfolio_value.index[0] == pd.Timestamp("2020-02-29")
+    assert metrics["시작일"] == "2020-02-29"
+

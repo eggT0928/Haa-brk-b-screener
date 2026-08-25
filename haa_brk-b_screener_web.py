@@ -21,7 +21,7 @@ MOMENTUM_PERIODS = (1, 3, 6, 12)
 # 원자재 자산인 DBC를 백테스트 전용 프록시로 사용합니다.
 BACKTEST_DOWNLOAD_START = "2000-01-01"
 BACKTEST_COMMODITY_PROXY = "DBC"
-BACKTEST_UI_MIN_DATE = pd.Timestamp("2008-08-01").date()
+BACKTEST_UI_MIN_DATE = pd.Timestamp("2008-07-31").date()
 
 
 def get_rebalance_ticker(asset: str, sp500_rebalance_ticker: str) -> str:
@@ -536,8 +536,11 @@ def run_backtest(data: pd.DataFrame, momentum_scores: pd.DataFrame, initial_bala
         if len(momentum_scores.index) > 0:
             first_valid_date = momentum_scores.index[0]
             last_valid_date = momentum_scores.index[-1]
-            # 사용자 선택 구간 바깥의 가격을 제거해 종료일 이후 수익이 섞이지 않게 합니다.
-            data_filtered = data[(data.index >= first_valid_date) & (data.index <= last_valid_date)].copy()
+            # 신호 인덱스는 달력상 월말(주말 포함)입니다. 시작 월말이 일요일이어도
+            # 그 달의 마지막 실제 거래일이 빠지지 않도록 월초~월말 전체를 포함합니다.
+            start_month = first_valid_date.to_period("M").start_time
+            end_month = last_valid_date.to_period("M").end_time
+            data_filtered = data[(data.index >= start_month) & (data.index <= end_month)].copy()
         else:
             data_filtered = data.copy()
 
@@ -1190,8 +1193,8 @@ with st.sidebar:
                 st.session_state["result_data"] = result_data
                 st.session_state["balance"] = total_balance
                 st.session_state["sp500_rebalance_ticker"] = sp500_rebalance_ticker
-        except ValueError:
-            st.error("올바른 숫자를 입력해주세요.")
+        except ValueError as e:
+            st.error(str(e) if str(e) else "올바른 숫자를 입력해주세요.")
         except Exception as e:
             st.error(f"오류 발생: {e}")
 
