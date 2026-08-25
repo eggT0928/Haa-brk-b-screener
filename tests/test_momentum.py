@@ -102,3 +102,41 @@ def test_preview_matches_official_signal_at_completed_month_end():
     assert preview_date == dates[-1]
     assert preview_month_end == dates[-1]
     assert preview_scores["SPY"] == pytest.approx(official)
+
+
+def test_prepare_backtest_data_uses_dbc_as_pdbc_proxy():
+    dates = pd.date_range("2008-01-01", periods=3, freq="D")
+    cols = [t for t in haa_app.STRATEGY_TICKERS if t != "PDBC"] + ["DBC"]
+    data = pd.DataFrame(100.0, index=dates, columns=cols)
+    data["DBC"] = [10.0, 11.0, 12.0]
+
+    result = haa_app.prepare_backtest_data(data, dates[-1])
+
+    assert list(result.columns) == haa_app.STRATEGY_TICKERS
+    assert result["PDBC"].tolist() == [10.0, 11.0, 12.0]
+
+
+def test_select_backtest_range_clamps_and_uses_month_end_dates():
+    dates = pd.date_range("2008-08-31", periods=6, freq="ME")
+    scores = pd.DataFrame(0.1, index=dates, columns=haa_app.STRATEGY_TICKERS)
+
+    selected, available_start, available_end, actual_start, actual_end = haa_app.select_backtest_range(
+        scores,
+        requested_start="2008-01-01",
+        requested_end="2009-12-31",
+    )
+
+    assert available_start == dates[0]
+    assert available_end == dates[-1]
+    assert actual_start == dates[0]
+    assert actual_end == dates[-1]
+    assert selected.index.equals(dates)
+
+
+def test_select_backtest_range_rejects_reversed_dates():
+    dates = pd.date_range("2020-01-31", periods=3, freq="ME")
+    scores = pd.DataFrame(0.1, index=dates, columns=haa_app.STRATEGY_TICKERS)
+
+    with pytest.raises(ValueError, match="시작일"):
+        haa_app.select_backtest_range(scores, "2020-03-01", "2020-01-01")
+
