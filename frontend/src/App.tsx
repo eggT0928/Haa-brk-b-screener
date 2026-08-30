@@ -3,6 +3,7 @@ import { onAuthStateChanged, type User } from 'firebase/auth';
 import { addDoc, collection, doc, limit, onSnapshot, orderBy, query, serverTimestamp, setDoc } from 'firebase/firestore';
 import { apiHeaders, auth, configured, db, demo, login, logout } from './firebase';
 import { demoConfirmed, demoMarket, demoPreview } from './demo';
+import { Curve } from './Curve';
 import { buildPlan, defaultProfile, money, percent, timeLabel, validateProfile } from './portfolio';
 import { TICKERS, type Backtest, type Market, type Profile, type Rebalance, type Signal, type UpdateStatus } from './types';
 
@@ -22,19 +23,7 @@ function SignalCard({ signal, expected }: { signal: Signal | null; expected?: bo
   </section>;
 }
 
-function Curve({ result, drawdown = false }: { result: Backtest; drawdown?: boolean }) {
-  const numbers = result.curve.map(p => drawdown ? p.drawdown * 100 : p.value);
-  const min = Math.min(...numbers), max = Math.max(...numbers), span = Math.max(max - min, .001);
-  const points = numbers.map((n,i) => `${40 + i / Math.max(1, numbers.length - 1) * 700},${180 - (n-min)/span*140}`).join(' ');
-  return <div className="chart"><svg viewBox="0 0 800 225" role="img" aria-label={drawdown ? '월말 기준 낙폭 그래프' : '월말 포트폴리오 가치 그래프'}>
-    {[40,110,180].map(y => <line key={y} x1="40" y1={y} x2="740" y2={y} stroke="#e5e9e3" />)}
-    <polyline points={points} fill="none" stroke={drawdown ? '#b66844' : '#21664d'} strokeWidth="3" strokeLinejoin="round" />
-    <text x="40" y="24">{drawdown ? `${max.toFixed(1)}%` : money(max)}</text>
-    <text x="40" y="201">{result.actualStart}</text><text x="740" y="201" textAnchor="end">{result.actualEnd}</text>
-  </svg></div>;
-}
-
-function BacktestView({ result }: { result: Backtest }) {
+export function BacktestView({ result }: { result: Backtest }) {
   return <div className="backtest-result">
     <p className="micro">적용 {result.actualStart} ~ {result.actualEnd} / 최대 {result.availableStart} ~ {result.availableEnd}<br />가격 캐시 갱신: {timeLabel(result.dataUpdatedAt)}</p>
     {result.warnings.map(w => <p className="notice" key={w}>{w}</p>)}
@@ -43,8 +32,8 @@ function BacktestView({ result }: { result: Backtest }) {
       ['최대 낙폭', percent(result.metrics.mdd)], ['연환산 변동성', percent(result.metrics.volatility)],
       ['샤프 비율', result.metrics.sharpe?.toFixed(2) ?? '—'], ['무위험수익률 · ^IRX 평균', percent(result.metrics.riskFree)],
     ].map(([label,value]) => <div key={label}><span>{label}</span><strong>{value}</strong></div>)}</div>
-    <Curve result={result} />
-    <details><summary>월말 낙폭 추이</summary><Curve result={result} drawdown /></details>
+    <Curve data={result.curve} />
+    <details><summary>월말 낙폭 추이</summary><Curve data={result.curve} drawdown /></details>
     <details><summary>연도별 수익률 / 월별 수익률</summary>
       <div className="year-bars">{result.yearly.map(v => <div key={v.year}><span>{v.year}</span><strong className={v.return < 0 ? 'negative' : 'positive'}>{percent(v.return)}</strong></div>)}</div>
       <div className="table-scroll"><table><thead><tr><th>연도</th>{Array.from({length:12},(_,i) => <th key={i}>{i+1}월</th>)}</tr></thead><tbody>

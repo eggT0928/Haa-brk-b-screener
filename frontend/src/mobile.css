@@ -1,0 +1,20 @@
+/* 모바일에서도 글자·터치 영역은 유지하고 넓은 표만 내부에서 스크롤한다. */
+@media(max-width:700px){
+  main,.panel,.workspace-grid>*{min-width:0}
+  .account{min-width:0}.account button{white-space:nowrap}
+  button{min-height:44px}
+  input,select,.holdings-grid input{font-size:16px}
+  nav{gap:0;justify-content:space-between}nav button{flex:1;padding:12px 4px;white-space:nowrap}
+  .section-title{flex-wrap:wrap;gap:8px}
+  .date-controls{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px 10px}
+  .date-controls label{min-width:0}.date-controls label:nth-of-type(3){grid-column:1/-1}
+  .date-controls input{max-width:100%;min-height:44px;padding:10px 7px}
+  .metric-grid{gap:10px}.metric-grid>div{padding:13px 11px;min-width:0}.metric-grid strong{font-size:20px;overflow-wrap:anywhere}
+  .table-scroll{overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch}
+  .micro{font-size:12px}.check{font-size:12px;align-items:flex-start;line-height:1.8}.check input{min-width:18px;height:18px;margin-top:3px}
+}
+@media(max-width:420px){
+  header{padding:0 14px;gap:8px}.brand{gap:8px}.brand em{display:none}
+  main{padding-left:12px;padding-right:12px}.panel{padding:16px 12px}
+  .holdings-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+}

@@ -1,0 +1,23 @@
+.curve{min-width:0;margin:24px 0 28px;color:var(--green)}
+.curve-heading{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:14px}
+.curve-heading h3{font-size:15px;margin:0;font-weight:700}.curve-heading h3 span{font-size:11px;font-weight:500;color:var(--muted)}
+.curve-heading>span{font-size:11px;color:var(--muted);text-align:right}
+.curve-frame,.curve-plot{min-width:0;width:100%}.curve-plot{position:relative}
+.curve-readout{display:grid;grid-template-columns:1.15fr 1fr .6fr;gap:16px;background:#f2f5ee;border:1px solid #e2e8dc;border-radius:8px;padding:14px 16px;margin-bottom:12px;font-variant-numeric:tabular-nums}
+.curve-readout>div{min-width:0}.curve-readout span{display:block;font-size:11px;color:var(--muted);margin-bottom:5px}.curve-readout strong{display:block;font-size:16px;overflow-wrap:anywhere}
+.curve-drawdown .curve-readout{background:#faf4ee;border-color:#ece1d6}
+.curve-plot svg{display:block;width:100%;overflow:visible;touch-action:pan-y;user-select:none}
+.curve-plot text{font:11px 'Noto Sans KR',sans-serif;fill:#6b7767;font-variant-numeric:tabular-nums}
+.curve-tooltip{position:absolute;top:12px;width:216px;max-width:calc(100% - 8px);padding:14px;border:1px solid #dfe5dc;background:rgba(255,254,250,.98);border-radius:12px;box-shadow:0 8px 24px #1e2a231a;pointer-events:none;z-index:2;font-size:12px;font-variant-numeric:tabular-nums}
+.curve-tooltip>strong{display:block;color:#64745e;margin-bottom:12px;font-size:11px}.curve-tooltip>div{display:flex;justify-content:space-between;gap:8px;margin-top:6px}.curve-tooltip span{color:var(--muted)}
+.curve-explorer{display:grid;grid-template-columns:44px minmax(0,1fr) 44px;gap:12px;align-items:center;margin:4px 0 0}
+.curve-explorer button{padding:0;min-height:44px;font-size:25px;line-height:1;background:#f5f7f0}.curve-explorer label{min-width:0}
+.curve-explorer label>span{display:flex;justify-content:space-between;gap:8px;font-size:11px}.curve-explorer b{font-weight:500;font-variant-numeric:tabular-nums}
+.curve-explorer input[type=range]{display:block;width:100%;height:32px;margin:0;padding:0;accent-color:#21664d;border:0;background:transparent;cursor:ew-resize;touch-action:pan-y}
+.curve-help{font-size:11px;line-height:1.8;color:var(--muted);margin:10px 0 0}
+@media(max-width:700px){
+  .curve{margin:22px 0}.curve-heading{gap:8px;align-items:flex-start}.curve-heading>span{font-size:10px}
+  .curve-readout{grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);padding:12px;gap:12px 8px}.curve-date{grid-column:1/-1;display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+  .curve-date span{margin:0}.curve-readout strong{font-size:15px}.curve-date strong{font-size:12px}
+  .curve-tooltip{display:none}.curve-explorer{gap:9px}.curve-help{font-size:11px}.curve-plot text{font-size:11px}
+}
