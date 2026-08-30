@@ -1,0 +1,7 @@
+firebase-functions>=0.4.3,<1
+firebase-admin>=6.6,<8
+pandas>=2.2,<3
+numpy>=1.26,<3
+yfinance>=0.2.65,<2
+pandas-market-calendars>=5,<6
+tzdata>=2025.1

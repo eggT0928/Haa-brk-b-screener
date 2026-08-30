@@ -1,0 +1,15 @@
+{
+  "name": "haa-firebase-workspace",
+  "private": true,
+  "workspaces": ["frontend"],
+  "scripts": {
+    "dev": "npm run dev -w frontend",
+    "build": "npm run build -w frontend",
+    "test": "npm run test -w frontend",
+    "test:rules": "firebase emulators:exec --project demo-haa --only firestore \"node --test tests/firestore.rules.test.mjs\""
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.0",
+    "firebase-tools": "^15.0.0"
+  }
+}

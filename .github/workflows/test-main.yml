@@ -40,4 +40,5 @@ jobs:
       - name: Run tests
         env:
           STREAMLIT_BROWSER_GATHER_USAGE_STATS: 'false'
-        run: pytest -q
+        # Firebase 의존성이 없는 기존 앱 전용 검증. 전체 검증은 firebase-ci.yml에서 수행합니다.
+        run: pytest -q tests/test_momentum.py

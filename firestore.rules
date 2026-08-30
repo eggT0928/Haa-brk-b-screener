@@ -1,0 +1,52 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function approved() {
+      return signedIn() && exists(/databases/$(database)/documents/access/$(request.auth.uid))
+        && get(/databases/$(database)/documents/access/$(request.auth.uid)).data.enabled == true;
+    }
+    function owner(uid) { return approved() && request.auth.uid == uid; }
+    function amount(n) { return n is number && n >= 0 && n <= 1000000000000; }
+    function quantity(n) { return n is number && n >= 0 && n <= 1000000000; }
+    function validHoldings(h) {
+      return h is map && h.keys().hasOnly(['SPY','SPYM','VEA','VWO','IWM','BIL','IEF','TLT','TIP','PDBC','VNQ','BRK-B'])
+        && h.keys().hasAll(['SPY','SPYM','VEA','VWO','IWM','BIL','IEF','TLT','TIP','PDBC','VNQ','BRK-B'])
+        && quantity(h.SPY) && quantity(h.SPYM) && quantity(h.VEA) && quantity(h.VWO)
+        && quantity(h.IWM) && quantity(h.BIL) && quantity(h.IEF) && quantity(h.TLT)
+        && quantity(h.TIP) && quantity(h.PDBC) && quantity(h.VNQ) && quantity(h['BRK-B']);
+    }
+    function dateText(s) { return s is string && (s == '' || s.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')); }
+    match /access/{uid} {
+      allow get: if signedIn() && request.auth.uid == uid;
+      allow list, write: if false;
+    }
+    match /users/{uid} {
+      allow read: if owner(uid);
+      allow create, update: if owner(uid)
+        && request.resource.data.keys().hasOnly(['holdings','cash','sp500','backtestStart','backtestEnd','updatedAt'])
+        && validHoldings(request.resource.data.holdings) && amount(request.resource.data.cash)
+        && request.resource.data.sp500 in ['SPY','SPYM']
+        && dateText(request.resource.data.backtestStart) && dateText(request.resource.data.backtestEnd)
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if owner(uid);
+      match /rebalances/{id} {
+        allow read: if owner(uid);
+        allow create: if owner(uid)
+          && request.resource.data.keys().hasOnly(['createdAt','signalMonth','sp500','equity','lines','kind'])
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.signalMonth.matches('^[0-9]{4}-[0-9]{2}$')
+          && request.resource.data.sp500 in ['SPY','SPYM']
+          && amount(request.resource.data.equity)
+          && request.resource.data.lines is list && request.resource.data.lines.size() <= 12
+          && request.resource.data.kind == '계산안';
+        allow update, delete: if false;
+      }
+    }
+    match /signals/{id} { allow read: if approved(); allow write: if false; }
+    match /signalHistory/{id} { allow read: if approved(); allow write: if false; }
+    match /market/{id} { allow read: if approved(); allow write: if false; }
+    match /status/{id} { allow read: if approved(); allow write: if false; }
+    match /{document=**} { allow read, write: if false; }
+  }
+}

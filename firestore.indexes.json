@@ -1,0 +1,4 @@
+{
+  "indexes": [],
+  "fieldOverrides": [{"collectionGroup": "internal", "fieldPath": "payload", "indexes": []}]
+}
