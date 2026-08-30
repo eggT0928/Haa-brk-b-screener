@@ -4,12 +4,14 @@
 기준 원본: `main` 커밋 `7f4b4cac1070eef23cbcfd1369cd83c632b3d05b`.
 작업 브랜치: `feat/firebase-haa-webapp`. 자동 배포·자동 머지는 없습니다.
 차트·모바일 후속 개선 브랜치: `feat/haa-interactive-charts`.
-수진 통합 브랜치: `feat/couple-rebalancer` — **통합 변경은 아직 운영 미배포·main 미병합**입니다.
+수진 통합 브랜치: `feat/couple-rebalancer` — **2026-08-30 사용자 승인 후 운영 배포 완료, main 미병합**입니다.
 기존 자동 갱신 2개를 함께 사용하고 수동 갱신은 보조로 제공합니다. 별도 Scheduler는 추가하지 않습니다.
 전략 보존 범위·분리 저장·추가 검증·배포 체크리스트는 [수진 통합 안내](docs/SUJIN_INTEGRATION.md)를 참고하세요.
 
 2026-08-30 사용자 승인 후 별도 Firebase 프로젝트 `haa-portfolio-260830`에 배포했습니다.
-웹 주소: <https://haa-portfolio-260830.web.app/>. 기존 앱·프로젝트와 `main`은 변경하지 않았습니다.
+웹 주소: <https://haa-portfolio-260830.web.app/>. 기존 Streamlit 앱·다른 Firebase 프로젝트와 `main`은 변경하지 않았습니다.
+수진 공유 갱신·수동 갱신·운영 백테스트를 확인했습니다. 수진의 실제 보유수량은 첫 사용 시 입력하세요.
+이전 화면이 남아 있으면 강력 새로고침(Ctrl+F5)을 하세요. 이후 배포부터 즉시 재확인되도록 루트 HTML에 `no-cache`를 적용했습니다.
 실제 확인 범위와 남은 운영 점검은 [검증 기록](docs/VALIDATION.md)을 참고하세요.
 
 ### 백테스트 그래프 사용법
