@@ -10,6 +10,7 @@ import firebase_admin
 import pandas as pd
 from firebase_admin import auth
 from firebase_functions import https_fn, options, scheduler_fn
+from haa import access as family_access
 from haa.market import YahooMarket
 from haa.service import cached_backtest
 from haa.store import create_store
@@ -74,7 +75,11 @@ def api(req: https_fn.Request) -> https_fn.Response:
         "/api/sujin/backtest",
         "/sujin/backtest",
     )
-    if req.method != ("POST" if sujin_route else "GET"):
+    access_route = req.path.removeprefix("/api") in ("/access/session", "/access/request", "/access/manage")
+    expected_method = "POST" if sujin_route or (access_route and not req.path.endswith("/manage")) else "GET"
+    if req.method != expected_method and not (
+        access_route and req.path.endswith("/manage") and req.method == "POST"
+    ):
         return response({"error": "이 경로에서 지원하지 않는 요청 방식입니다."}, 405)
     bearer = req.headers.get("Authorization", "")
     if not bearer.startswith("Bearer "):
@@ -85,9 +90,6 @@ def api(req: https_fn.Request) -> https_fn.Response:
         return response({"error": "로그인이 만료되었거나 유효하지 않습니다."}, 401)
     try:
         db = store()
-        access = db.get(f"access/{decoded['uid']}")
-        if not access or access.get("enabled") is not True:
-            return response({"error": "관리자의 사용자 승인이 필요합니다."}, 403)
         if os.getenv("ENFORCE_APP_CHECK", "false").lower() == "true":
             from firebase_admin import app_check
 
@@ -95,6 +97,22 @@ def api(req: https_fn.Request) -> https_fn.Response:
                 app_check.verify_token(req.headers.get("X-Firebase-AppCheck", ""))
             except Exception:
                 return response({"error": "앱 검증에 실패했습니다."}, 403)
+        if access_route:
+            if req.content_length and req.content_length > 2048:
+                return response({"error": "요청 내용이 너무 큽니다."}, 413)
+            repo, now = family_access.FamilyRepository(db.db), pd.Timestamp.now(tz="UTC")
+            if req.path.endswith("/session"):
+                return response(family_access.session(repo, decoded, now))
+            if req.path.endswith("/request"):
+                return response(family_access.request_access(repo, decoded, now))
+            if req.method == "GET":
+                return response(family_access.management_list(repo, decoded))
+            return response(
+                family_access.manage(repo, decoded, req.get_json(silent=True), now, auth.get_user)
+            )
+        access = db.get(f"access/{decoded['uid']}")
+        if not access or access.get("enabled") is not True:
+            return response({"error": "관리자의 사용자 승인이 필요합니다."}, 403)
         if sujin_route:
             if req.content_length and req.content_length > 4096:
                 return response({"error": "요청 내용이 너무 큽니다."}, 413)
@@ -131,6 +149,8 @@ def api(req: https_fn.Request) -> https_fn.Response:
                 raise ValueError("날짜는 YYYY-MM-DD 형식이어야 합니다.")
         result = cached_backtest(db, **args, initial=float(req.args.get("initial", "10000")))
         return response(result)
+    except PermissionError as exc:
+        return response({"error": str(exc)}, 403)
     except RefreshBusy as exc:
         result = response({"error": str(exc)}, 429)
         result.headers["Retry-After"] = "60"

@@ -7,6 +7,7 @@
 수진 통합 브랜치: `feat/couple-rebalancer` — **2026-08-30 사용자 승인 후 운영 배포 완료, main 미병합**입니다.
 기존 자동 갱신 2개를 함께 사용하고 수동 갱신은 보조로 제공합니다. 별도 Scheduler는 추가하지 않습니다.
 전략 보존 범위·분리 저장·추가 검증·배포 체크리스트는 [수진 통합 안내](docs/SUJIN_INTEGRATION.md)를 참고하세요.
+가족 권한 후속 브랜치: `feat/family-access`. 앱 안에서 이메일 초대·승인·해제를 관리하고 두 Google 계정이 같은 포트폴리오를 사용합니다. [초대 사용법·초기 관리자 설정·보안](docs/FAMILY_ACCESS.md)을 참고하세요.
 
 2026-08-30 사용자 승인 후 별도 Firebase 프로젝트 `haa-portfolio-260830`에 배포했습니다.
 웹 주소: <https://haa-portfolio-260830.web.app/>. 기존 Streamlit 앱·다른 Firebase 프로젝트와 `main`은 변경하지 않았습니다.
@@ -84,7 +85,8 @@ functions/haa/calendar.py  NYSE 휴장·조기폐장·서머타임 경계
 functions/haa/market.py    yfinance 조회, 데이터 검증, 재시도
 functions/haa/store.py     Firestore 잠금, 압축 캐시, 원자적 발행
 functions/haa/service.py   공용 갱신 및 캐시 기반 백테스트
-firestore.rules           승인 계정 및 본인 데이터만 허용
+functions/haa/access.py    Google 이메일 초대·승인·가족 관리자 API
+firestore.rules           승인 계정의 서버 지정 공유 공간만 허용
 firebase.json             Hosting, Python 런타임, 에뮬레이터
 .firebaserc.example       배포 프로젝트 선택 예시
 tests/                    원본 및 신규 엔진/API/장애복구/규칙 테스트
@@ -97,9 +99,9 @@ Firestore 데이터 모델:
 
 | 경로 | 내용 | 클라이언트 권한 |
 |---|---|---|
-| `access/{uid}` | `enabled: true` 승인 여부 | 본인 상태 읽기만 |
-| `users/{uid}` | `holdings`, USD `cash`, `sp500`, 백테스트 기간, 갱신시각 | 승인된 본인만 읽기·쓰기 |
-| `users/{uid}/rebalances/{id}` | 사용자가 저장한 계산안 | 본인 읽기·추가만, 변경·삭제 금지 |
+| `access/{uid}` | enabled, role, ownerUid, email | 본인 상태 읽기만, 서버 쓰기 |
+| `users/{ownerUid}` | `holdings`, USD `cash`, `sp500`, 백테스트 기간, 갱신시각 | 승인된 공유 구성원 읽기·쓰기 |
+| `users/{ownerUid}/rebalances/{id}` | 사용자가 저장한 계산안 | 공유 구성원 읽기·추가만, 변경·삭제 금지 |
 | `signals/confirmed`, `signals/preview` | 분리된 공용 신호 | 승인 사용자 읽기만 |
 | `signalHistory/{YYYY-MM}` | 운영 이후 월별 확정본 | 승인 사용자 읽기만 |
 | `market/current` | 원시 시세와 종목별 시각 | 승인 사용자 읽기만 |
@@ -167,7 +169,7 @@ npm run build
 npx firebase emulators:start --project demo-haa --only auth,firestore,functions,hosting
 ```
 
-Hosting `http://127.0.0.1:5000` 또는 별도 `npm run dev`를 엽니다. Google 로그인 팝업은 Auth 에뮬레이터의 테스트 계정 선택 화면입니다. 화면의 UID를 Firestore 에뮬레이터 UI에서 `access/{uid}` 문서에 `enabled: true`로 승인하세요. 실제 계정과 에뮬레이터를 혼용하지 않도록 코드가 `demo-` 프로젝트를 강제합니다.
+Hosting `http://127.0.0.1:5000` 또는 별도 `npm run dev`를 엽니다. Google 로그인 팝업은 Auth 에뮬레이터의 테스트 계정 선택 화면입니다. 에뮬레이터 UI에서 `internal/family`의 ownerUid·ownerEmail과 `access/{uid}`의 enabled·role·ownerUid·email을 가상 관리자 계정에 맞춰 설정합니다([필드 안내](docs/FAMILY_ACCESS.md)). 실제 계정과 에뮬레이터를 혼용하지 않도록 코드가 `demo-` 프로젝트를 강제합니다.
 
 에뮬레이터를 종료한 뒤 아래 명령으로 가상 Yahoo 응답을 사용한 로컬 통합 검증도 실행할 수 있습니다. 실제 Google 자격증명 없이 `demo-haa` 로컬 저장·인증만 테스트합니다.
 
@@ -212,7 +214,7 @@ npx firebase deploy --only firestore:rules,firestore:indexes,functions,hosting -
 
 6. Cloud Scheduler / Cloud Functions API가 활성화되었는지 확인합니다. Firebase CLI가 예약 작업과 호출 권한을 생성합니다. 예약 함수에 직접 공개 호출 권한을 추가하지 마세요. HTTP `api`는 Hosting 연결을 위해 공개 진입점이지만 모든 요청에서 ID 토큰·계정 승인 여부를 확인합니다.
 7. Cloud Scheduler 콘솔에서 `firebase-schedule-refresh_daily-us-central1`의 **지금 실행**으로 초기 데이터를 만듭니다. 이름은 배포 로그와 콘솔에서 확인하세요. `status/daily.ok`, `internal/history`, `signals/confirmed`, `market/current`를 확인합니다. Yahoo 실패 시 로그에 누락 일자/티커가 남으며 빈 캐시를 임의 값으로 채우지 않습니다. 문제 해결 후 예약 작업을 다시 실행합니다.
-8. Hosting 웹에서 Google 로그인합니다. 표시된 UID를 확인해 관리자 콘솔로 `access/{UID}` 문서를 만들고 boolean `enabled: true`를 넣습니다. 사용자는 자신의 승인을 변경할 수 없습니다. 승인 해제는 이 값을 false로 바꾸면 됩니다.
+8. 관리자 본인이 Hosting에서 Google 로그인한 뒤 최초 한 번만 [가족 관리자 초기 설정](docs/FAMILY_ACCESS.md)을 수행합니다. 이후 앱의 가족 관리에서 이메일 초대·승인·해제를 처리합니다. 일반 사용자는 자신이나 다른 사람의 승인을 변경할 수 없습니다. Firebase IAM 소유자 초대는 앱 이용에 필요하지 않습니다.
 9. 보유수량 저장→재로그인 복원, SPY/SPYM 수량 차이, 백테스트 최대/사용자 기간, 확정·예상·시세 시각, 이력 저장을 확인합니다. 신규 일일 갱신의 가격이 증권사/Yahoo 화면과 맞는지 확인한 뒤 실전에 사용하세요.
 10. 비용 알림과 함수 오류 로그를 확인합니다. Artifact Registry 이미지 정리 정책도 확인하세요. Scheduler 설정을 변경할 때는 `functions/main.py`를 수정해 재배포합니다. 콘솔에서 임의 수정한 일정은 다음 배포에서 되돌아갈 수 있습니다.
 

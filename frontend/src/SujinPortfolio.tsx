@@ -11,8 +11,8 @@ const explain = (error: unknown) => error instanceof Error ? error.message : '�
 const sampleMarket: Market = {prices:Object.fromEntries(SUJIN_TICKERS.map(t=>[t,t==='SPY'?600:100])),
   priceTimes:Object.fromEntries(SUJIN_TICKERS.map(t=>[t,'2026-08-28T20:00:00Z'])),updatedAt:'2026-08-30T05:42:00Z'};
 
-export function SujinPortfolio({ user, now, renderBacktest }: {
-  user: User | null; now: number; renderBacktest: (result: Backtest) => ReactNode;
+export function SujinPortfolio({ user, ownerUid=user?.uid, now, renderBacktest }: {
+  user: User | null; ownerUid?: string; now: number; renderBacktest: (result: Backtest) => ReactNode;
 }) {
   const [profile,setProfile] = useState<SujinProfile>(()=>({...defaultSujinProfile(),totalBalance:demo?10000:0}));
   const [market,setMarket] = useState<Market | null>(demo?sampleMarket:null);
@@ -31,10 +31,10 @@ export function SujinPortfolio({ user, now, renderBacktest }: {
   const activeRequest = useRef<AbortController | null>(null);
   useEffect(()=>{
     alive.current = true;
-    if (demo || !db || !user) return ()=>{ alive.current=false; activeRequest.current?.abort(); };
+    if (demo || !db || !user || !ownerUid) return ()=>{ alive.current=false; activeRequest.current?.abort(); };
     const fail = (e: unknown) => setError(`수진 데이터를 불러오지 못했습니다: ${explain(e)}`);
     const stop = [
-      onSnapshot(doc(db,'users',user.uid,'portfolios','sujin'),s=>{
+      onSnapshot(doc(db,'users',ownerUid,'portfolios','sujin'),s=>{
         if (!dirty.current) {
           const next = s.exists()?s.data() as SujinProfile:defaultSujinProfile();
           try { validateSujinProfile(next); setProfile(next); setProfileReady(true); }
@@ -43,11 +43,11 @@ export function SujinPortfolio({ user, now, renderBacktest }: {
       },fail),
       onSnapshot(doc(db,'market','sujin'),s=>{setMarket(s.exists()?s.data() as Market:null);setAcknowledged(false);},fail),
       onSnapshot(doc(db,'status','sujinQuotes'),s=>setStatus(s.exists()?s.data() as UpdateStatus:null),fail),
-      onSnapshot(query(collection(db,'users',user.uid,'portfolios','sujin','rebalances'),orderBy('createdAt','desc'),limit(24)),
+      onSnapshot(query(collection(db,'users',ownerUid,'portfolios','sujin','rebalances'),orderBy('createdAt','desc'),limit(24)),
         s=>setRecords(s.docs.map(d=>({...d.data(),id:d.id} as SujinRecord))),fail),
     ];
     return ()=>{alive.current=false;activeRequest.current?.abort();stop.forEach(fn=>fn());};
-  },[user?.uid]);
+  },[user?.uid,ownerUid]);
   const edit = (next: Partial<SujinProfile>) => {dirty.current=true;setProfile(p=>({...p,...next}));setMessage('');};
   let plan: ReturnType<typeof buildSujinPlan> | null = null, planError='';
   if (market && profileReady) {try {plan=buildSujinPlan(profile,market);} catch(e) {planError=explain(e);}}
@@ -80,21 +80,21 @@ export function SujinPortfolio({ user, now, renderBacktest }: {
     finally {if(alive.current) setBusy('');}
   }
   async function saveProfile() {
-    if (!db || !user || demo || !profileReady || busy) return;
+    if (!db || !user || !ownerUid || demo || !profileReady || busy) return;
     setBusy('save');setError('');setMessage('');
     try {
       validateSujinProfile(profile);
-      await setDoc(doc(db,'users',user.uid,'portfolios','sujin'),{...profile,updatedAt:serverTimestamp()});
+      await setDoc(doc(db,'users',ownerUid,'portfolios','sujin'),{...profile,updatedAt:serverTimestamp()});
       if(alive.current) {dirty.current=false;setMessage('수진 보유수량과 설정을 저장했습니다. 현근 데이터는 변경하지 않았습니다.');}
     } catch(e) {if(alive.current) setError(explain(e));}
     finally {if(alive.current) setBusy('');}
   }
   async function savePlan() {
-    if (!db || !user || demo || !plan || !market || busy || (stale&&!acknowledged)) return;
+    if (!db || !user || !ownerUid || demo || !plan || !market || busy || (stale&&!acknowledged)) return;
     setBusy('record');setError('');setMessage('');
     try {
       const month = new Intl.DateTimeFormat('sv-SE',{timeZone:'America/New_York',year:'numeric',month:'2-digit'}).format(new Date(now));
-      await addDoc(collection(db,'users',user.uid,'portfolios','sujin','rebalances'),{
+      await addDoc(collection(db,'users',ownerUid,'portfolios','sujin','rebalances'),{
         createdAt:serverTimestamp(),month,strategy:profile.strategy,kind:'계산안',equity:plan.equity,
         remainingCash:plan.remainingCash,priceUpdatedAt:market.updatedAt,oldestPriceAt:plan.oldestPriceAt,
         quantityMode:profile.quantityMode,lines:plan.lines.map(({ticker,held,price,target,trade})=>({ticker,held,price,target,trade})),

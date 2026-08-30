@@ -6,7 +6,11 @@ service cloud.firestore {
       return signedIn() && exists(/databases/$(database)/documents/access/$(request.auth.uid))
         && get(/databases/$(database)/documents/access/$(request.auth.uid)).data.enabled == true;
     }
-    function owner(uid) { return approved() && request.auth.uid == uid; }
+    function owner(uid) {
+      // 서버가 발급한 공유 대상만 허용한다. URL·프로필 필드로 다른 가족 경로를 선택할 수 없다.
+      let grant = get(/databases/$(database)/documents/access/$(request.auth.uid)).data;
+      return approved() && grant.get('ownerUid', request.auth.uid) == uid;
+    }
     function amount(n) { return n is number && n >= 0 && n <= 1000000000000; }
     function quantity(n) { return n is number && n >= 0 && n <= 1000000000; }
     function validHoldings(h) {
@@ -62,7 +66,7 @@ service cloud.firestore {
         && request.resource.data.sp500 in ['SPY','SPYM']
         && dateText(request.resource.data.backtestStart) && dateText(request.resource.data.backtestEnd)
         && request.resource.data.updatedAt == request.time;
-      allow delete: if owner(uid);
+      allow delete: if owner(uid) && request.auth.uid == uid;
       match /rebalances/{id} {
         allow read: if owner(uid);
         allow create: if owner(uid)

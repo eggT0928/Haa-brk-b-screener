@@ -5,6 +5,8 @@ import { apiHeaders, auth, configured, db, demo, login, logout } from './firebas
 import { demoConfirmed, demoMarket, demoPreview } from './demo';
 import { Curve } from './Curve';
 import { SujinPortfolio } from './SujinPortfolio';
+import { useFamilyAccess } from './familyAccess';
+import { FamilyAccessPanel } from './FamilyAccessPanel';
 import { buildPlan, defaultProfile, money, percent, timeLabel, validateProfile } from './portfolio';
 import { TICKERS, type Backtest, type Market, type Profile, type Rebalance, type Signal, type UpdateStatus } from './types';
 
@@ -54,7 +56,11 @@ export function BacktestView({ result }: { result: Backtest }) {
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
-  const [approved, setApproved] = useState(demo);
+  const family = useFamilyAccess(user);
+  const approved = demo || family.access?.enabled === true;
+  const dataOwnerUid = family.access?.ownerUid ?? user?.uid;
+  const [showFamily,setShowFamily] = useState(false);
+  const [profileReady,setProfileReady] = useState(demo);
   const [tab, setTab] = useState('overview');
   const [portfolioOwner, setPortfolioOwner] = useState('hyungeun');
   const [sujinVisited, setSujinVisited] = useState(false);
@@ -77,46 +83,47 @@ export default function App() {
   const requestGeneration = useRef(0);
   useEffect(() => { const id = setInterval(() => setNow(Date.now()), 60000); return () => clearInterval(id); }, []);
   useEffect(() => auth ? onAuthStateChanged(auth, setUser) : undefined, []);
+  useEffect(() => { if(family.access?.role!=='admin')setShowFamily(false); }, [family.access?.role]);
   useEffect(() => {
     if (demo || !db) return;
-    setApproved(false); setProfile(defaultProfile()); dirty.current = false;
+    setProfile(defaultProfile()); dirty.current = false; setProfileReady(false);setShowFamily(false);
     setPortfolioOwner('hyungeun'); setSujinVisited(false);
     setConfirmed(null); setPreview(null); setMarket(null); setHistory([]); setRebalances([]); setStatuses({}); setResult(null);
     requestGeneration.current++; setLoading(false); setError(''); setMessage('');
-    if (!user) return;
-    return onSnapshot(doc(db, 'access', user.uid), s => setApproved(s.data()?.enabled === true), e => setError(explainError(e)));
   }, [user]);
   useEffect(() => {
-    if (!db || !user || !approved || demo) return;
+    if (demo) return;
+    setProfileReady(false);setProfile(defaultProfile());setRebalances([]);dirty.current=false;setResult(null);requestGeneration.current++;setLoading(false);
+    if (!db || !user || !approved || !dataOwnerUid) return;
     const failure = (e: unknown) => setError(`데이터를 불러오지 못했습니다: ${explainError(e)}`);
     const subscriptions = [
-      onSnapshot(doc(db,'users',user.uid), s => { if (s.exists() && !dirty.current) setProfile(s.data() as Profile); }, failure),
+      onSnapshot(doc(db,'users',dataOwnerUid), s => { if (!dirty.current) {const next=s.exists()?s.data() as Profile:defaultProfile();try{validateProfile(next);setProfile(next);setProfileReady(true);}catch(e){failure(e);}} }, failure),
       onSnapshot(doc(db,'signals','confirmed'), s => setConfirmed(s.exists() ? s.data() as Signal : null), failure),
       onSnapshot(doc(db,'signals','preview'), s => setPreview(s.exists() ? s.data() as Signal : null), failure),
       onSnapshot(doc(db,'market','current'), s => { setMarket(s.exists() ? s.data() as Market : null); setAcknowledged(false); }, failure),
       ...['intraday','daily'].map(job => onSnapshot(doc(db!,'status',job), s => { if(s.exists()) setStatuses(old => ({...old,[job]:s.data() as UpdateStatus})); }, failure)),
       onSnapshot(query(collection(db,'signalHistory'),orderBy('month','desc'),limit(24)), s => setHistory(s.docs.map(d => d.data() as Signal)), failure),
-      onSnapshot(query(collection(db,'users',user.uid,'rebalances'),orderBy('createdAt','desc'),limit(24)), s => setRebalances(s.docs.map(d => ({...d.data(),id:d.id} as Rebalance))), failure),
+      onSnapshot(query(collection(db,'users',dataOwnerUid,'rebalances'),orderBy('createdAt','desc'),limit(24)), s => setRebalances(s.docs.map(d => ({...d.data(),id:d.id} as Rebalance))), failure),
     ];
     return () => subscriptions.forEach(stop => stop());
-  }, [user, approved]);
-  const edit = (update: Partial<Profile>) => { dirty.current = true; setProfile(p => ({...p,...update})); setMessage(''); };
+  }, [user, approved, dataOwnerUid]);
+  const edit = (update: Partial<Profile>) => { if(!profileReady)return;dirty.current = true; setProfile(p => ({...p,...update})); setMessage(''); };
   let plan: ReturnType<typeof buildPlan> | null = null, planError = '';
-  if (confirmed && market) { try { plan = buildPlan(profile, confirmed, market); } catch(e) { planError = explainError(e); } }
+  if (confirmed && market && profileReady) { try { plan = buildPlan(profile, confirmed, market); } catch(e) { planError = explainError(e); } }
   const stale = !market || Object.entries(market.priceTimes).some(([ticker,t]) =>
     (profile.holdings[ticker] > 0 || plan?.lines.some(l => l.ticker === ticker)) && now - new Date(t).getTime() > 30*60000);
   const failed = Object.values(statuses).some(s => !s.ok);
   async function saveProfile() {
-    if (!db || !user || demo) return;
+    if (!db || !user || demo || !approved || !dataOwnerUid || !profileReady) return;
     setSaving(true); setError('');
-    try { validateProfile(profile); await setDoc(doc(db,'users',user.uid), {...profile,updatedAt:serverTimestamp()}); dirty.current = false; setMessage('보유수량과 설정을 저장했습니다.'); }
+    try { validateProfile(profile); await setDoc(doc(db,'users',dataOwnerUid), {...profile,updatedAt:serverTimestamp()}); dirty.current = false; setMessage('보유수량과 설정을 저장했습니다.'); }
     catch(e) { setError(explainError(e)); } finally { setSaving(false); }
   }
   async function recordPlan() {
-    if (!db || !user || !plan || !confirmed || demo) return;
+    if (!db || !user || !plan || !confirmed || demo || !approved || !dataOwnerUid || !profileReady) return;
     setSaving(true); setError('');
     try {
-      await addDoc(collection(db,'users',user.uid,'rebalances'), { createdAt:serverTimestamp(),signalMonth:confirmed.month,
+      await addDoc(collection(db,'users',dataOwnerUid,'rebalances'), { createdAt:serverTimestamp(),signalMonth:confirmed.month,
         sp500:profile.sp500,equity:plan.equity,lines:plan.lines,kind:'계산안' });
       setMessage('계산안을 이력에 저장했습니다. 실제 주문·보유수량 변경은 수행하지 않았습니다.');
     } catch(e) { setError(explainError(e)); } finally { setSaving(false); }
@@ -145,10 +152,14 @@ export default function App() {
       {demo && <div className="notice">샘플 데이터입니다. 실제 시세·투자 신호가 아니며 로그인, 저장 및 백테스트 서버 호출은 비활성화되어 있습니다.</div>}
       {!demo && !configured && <div className="notice">Firebase 연결 설정이 아직 없습니다. README의 환경설정 절차를 완료한 뒤 다시 빌드하세요. 실제 신호는 표시하지 않습니다.</div>}
       {!demo && configured && !user && <div className="notice">로그인 후 승인된 계정만 신호와 개인 보유수량을 볼 수 있습니다.</div>}
-      {!demo && user && !approved && <div className="notice">관리자 승인을 기다리고 있습니다. 관리자에게 이 사용자 ID를 전달하세요: <code>{user.uid}</code></div>}
+      {!demo && user && !approved && <div className="notice"><p>{user.email} · 초대된 계정인지 확인하고 있습니다. 초대가 없다면 관리자 승인이 필요합니다.</p><div className="family-actions"><button disabled={family.busy} onClick={family.refresh}>초대·승인 다시 확인</button><button disabled={family.busy} onClick={family.requestApproval}>관리자에게 승인 요청</button></div>{family.message&&<p role="status">{family.message}</p>}</div>}
+      {family.error&&<p className="error" role="alert">{family.error}</p>}
       {error && <div className="error" role="alert">{error}<button className="quiet" onClick={() => setError('')}>닫기</button></div>}
       {message && portfolioOwner==='hyungeun' && <div className="success" role="status">{message}</div>}
       {approved && <>
+        {!demo&&<div className="family-toolbar"><span>가족 공유 공간 · {family.access?.role==='admin'?'관리자':'구성원'} · 같은 현근·수진 포트폴리오를 사용합니다.</span>{family.access?.role==='admin'&&<button onClick={()=>setShowFamily(v=>!v)}>{showFamily?'포트폴리오로 돌아가기':'가족·권한 관리'}</button>}</div>}
+        {showFamily&&family.access?.role==='admin'&&<FamilyAccessPanel/>}
+        <div hidden={showFamily}>
         <div className="portfolio-switch" role="group" aria-label="포트폴리오 선택">
           <button aria-pressed={portfolioOwner==='hyungeun'} onClick={()=>setPortfolioOwner('hyungeun')}>남편 · 현근<span>HAA 80% + BRK-B 20%</span></button>
           <button aria-pressed={portfolioOwner==='sujin'} onClick={()=>{setSujinVisited(true);setPortfolioOwner('sujin');}}>아내 · 수진<span>고정비중 월말 리밸런싱</span></button>
@@ -164,11 +175,14 @@ export default function App() {
           </details>
           <div className="workspace-grid">
             <section className="panel holdings"><div className="section-title"><h2>나의 보유자산</h2><span>USD 기준</span></div>
+              <fieldset className="family-fields" disabled={!profileReady||saving}>
               <label>실전 S&P500 ETF<select value={profile.sp500} onChange={e=>edit({sp500:e.target.value as Profile['sp500']})}><option>SPY</option><option>SPYM</option></select></label>
               <p className="micro">선택 ETF는 실행 수량에만 반영합니다. 모멘텀과 백테스트는 항상 SPY입니다.</p>
               <label>현금 잔액 (USD)<input type="number" min="0" max="1000000000000" step="0.01" value={Number.isNaN(profile.cash)?'':profile.cash} onChange={e=>edit({cash:e.target.valueAsNumber})}/></label>
               <div className="holdings-grid">{TICKERS.map(t=><label key={t}>{t}<input aria-label={`${t} 보유수량`} type="number" min="0" max="1000000000" step="any" value={Number.isNaN(profile.holdings[t])?'':profile.holdings[t]} onChange={e=>edit({holdings:{...profile.holdings,[t]:e.target.valueAsNumber}})}/></label>)}</div>
-              <button className="primary full" disabled={saving || demo} onClick={saveProfile}>{saving?'저장 중…':'보유수량·설정 저장'}</button>
+              </fieldset>
+              {!profileReady&&<p className="micro">기존 보유수량을 불러오는 중입니다. 확인 전에는 저장할 수 없습니다.</p>}
+              <button className="primary full" disabled={saving || demo || !profileReady} onClick={saveProfile}>{saving?'저장 중…':'보유수량·설정 저장'}</button>
             </section>
             <section className="panel rebalance"><div className="section-title"><h2>리밸런싱 계산안</h2><span>{confirmed?.month ?? '—'} 확정 신호 기준</span></div>
               {planError && <p className="error">{planError}</p>}
@@ -180,7 +194,7 @@ export default function App() {
                 </tbody></table></div>
                 <p className="micro">매도 후 매수하는 계산입니다. 수수료·세금·환전·호가 차이는 제외하며, 보유자산은 자동 변경하지 않습니다. 가격 셀에 마우스를 올리면 시세 시각을 확인할 수 있습니다.</p>
                 {(stale || failed) && <label className="check"><input type="checkbox" checked={acknowledged} onChange={e=>setAcknowledged(e.target.checked)}/>지연 또는 직전 성공 시세인 점을 확인했습니다.</label>}
-                <button disabled={saving || demo || ((stale || failed) && !acknowledged)} onClick={recordPlan}>계산안 이력 저장 · 주문 아님</button>
+                <button disabled={saving || demo || !profileReady || ((stale || failed) && !acknowledged)} onClick={recordPlan}>계산안 이력 저장 · 주문 아님</button>
               </> : !planError && <p className="empty">확정 신호와 가격이 준비되면 보유수량에 맞는 계산안이 표시됩니다.</p>}
             </section>
           </div>
@@ -195,7 +209,8 @@ export default function App() {
         {tab === 'history' && <div className="history-grid"><section className="panel"><h2>월말 확정 신호</h2><p className="micro">운영 시작 이후 저장한 확정본 · 최근 24건 · 신호 기준 티커 표시</p>{history.length?<div className="table-scroll"><table><thead><tr><th>신호 월</th><th>상태</th><th>목표 자산</th></tr></thead><tbody>{history.map(h=><tr key={h.month}><td>{h.month}</td><td>{h.regime}</td><td>{weightsLabel(h.weights)}</td></tr>)}</tbody></table></div>:<p className="empty">저장된 확정 이력이 없습니다.</p>}</section>
           <section className="panel"><h2>나의 리밸런싱 계산안</h2><p className="micro">최근 24건. 저장은 주문 체결을 의미하지 않습니다.</p>{rebalances.length?rebalances.map(r=><details key={r.id}><summary>{r.signalMonth} · {r.sp500} · {money(r.equity)} · {r.kind}</summary><div className="table-scroll"><table><thead><tr><th>종목</th><th>목표</th><th>매매</th><th>사용 가격</th></tr></thead><tbody>{r.lines.map(l=><tr key={l.ticker}><td>{l.ticker}</td><td>{l.target}</td><td>{l.trade}</td><td>{money(l.price)}</td></tr>)}</tbody></table></div></details>):<p className="empty">아직 저장한 계산안이 없습니다.</p>}</section></div>}
         </div>
-        {sujinVisited&&<div hidden={portfolioOwner!=='sujin'}><SujinPortfolio key={user?.uid??'demo'} user={user} now={now} renderBacktest={data=><BacktestView result={data}/>}/></div>}
+        {sujinVisited&&<div hidden={portfolioOwner!=='sujin'}><SujinPortfolio key={`${user?.uid}:${dataOwnerUid}`} user={user} ownerUid={dataOwnerUid} now={now} renderBacktest={data=><BacktestView result={data}/>}/></div>}
+        </div>
       </>}
       <footer><span>부부 리밸런서</span><p>개인용 투자 보조 도구 · Yahoo Finance 시세는 지연되거나 수정될 수 있습니다.<br />예상 신호는 확정 신호가 아니며, 자동 주문을 실행하지 않습니다.</p></footer>
     </main>

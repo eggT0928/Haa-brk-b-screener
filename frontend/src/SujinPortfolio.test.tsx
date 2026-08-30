@@ -27,6 +27,14 @@ beforeEach(()=>{
 });
 afterEach(()=>{cleanup();vi.unstubAllGlobals();});
 describe('수진 저장·갱신 화면',()=>{
+  it('아내 계정도 서버가 승인한 현근 소유 경로에 저장한다',async()=>{
+    render(<SujinPortfolio user={{uid:'wife'} as User} ownerUid="owner" now={now} renderBacktest={()=>null}/>);
+    fireEvent.change(screen.getByLabelText('수진 QQQM 보유수량'),{target:{value:'8'}});
+    fireEvent.click(screen.getByRole('button',{name:'수진 보유수량·설정 저장'}));
+    await waitFor(()=>expect(fixture.writes).toHaveBeenCalledTimes(1));
+    expect(fixture.writes.mock.calls[0][0]).toBe('users/owner/portfolios/sujin');
+    expect(fixture.callbacks.has('users/wife/portfolios/sujin')).toBe(false);
+  });
   it('탭을 열기만 하면 Yahoo 서버를 호출하지 않는다',()=>{show();expect(fetch).not.toHaveBeenCalled();});
   it('저장 위치가 현근 문서와 분리되며 다시 열면 수량을 복원한다',async()=>{
     const view=show();fireEvent.change(screen.getByLabelText('수진 QQQM 보유수량'),{target:{value:'7'}});

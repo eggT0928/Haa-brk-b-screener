@@ -65,6 +65,37 @@ sujin.fail = False
 assert run_backtest(store, sujin, now + pd.Timedelta(minutes=3))["basis"] == "SPY 10% + SPYM 10%"
 print("수진 실제 Firestore 통합 검증 성공: 독립 잠금·토큰·재시도 제한·캐시 보존·장기 이력")
 
+# 이메일 초대의 두 동시 수락 중 하나만 공유 구성원으로 등록되는지 실제 트랜잭션으로 검증한다.
+from concurrent.futures import ThreadPoolExecutor  # noqa: E402
+from haa import access as family  # noqa: E402
+from test_firebase_access import OWNER, claims, lookup  # noqa: E402
+
+family_repo = family.FamilyRepository(store.db)
+store.db.document(family.CONFIG).set({"ownerUid": "owner", "ownerEmail": OWNER["email"]})
+store.db.document("access/owner").set({"enabled": True, "role": "admin", "ownerUid": "owner", "email": OWNER["email"]})
+store.db.document("users/owner").set({"preserve": "실제 계정과 무관한 에뮬레이터 검증값"})
+family.manage(family_repo, OWNER, {"action": "invite", "email": claims()["email"]}, now, lookup)
+def competing_claim(uid):
+    try:
+        return family.session(family_repo, claims(uid), now)
+    except LookupError:
+        # 에뮬레이터의 비관적 잠금 경합도 허용하되, 실패 시 권한이 중복 발급되면 안 된다.
+        return {"uid": uid, "enabled": False, "retry": True}
+
+
+with ThreadPoolExecutor(max_workers=2) as pool:
+    concurrent = list(pool.map(competing_claim, ["wife", "duplicate"]))
+assert sum(result["enabled"] for result in concurrent) <= 1
+# 잠금 경합을 안내받은 요청은 사용자가 다시 확인한 것처럼 재실행한다.
+results = [family.session(family_repo, claims(uid), now) for uid in ["wife", "duplicate"]]
+assert sum(result["enabled"] for result in results) == 1
+winner = next(result["uid"] for result in results if result["enabled"])
+family.manage(family_repo, OWNER, {"action": "revoke", "uid": winner}, now, lookup)
+assert not family.session(family_repo, claims(winner), now)["enabled"]
+assert store.get("users/owner") == {"preserve": "실제 계정과 무관한 에뮬레이터 검증값"}
+assert store.get("signals/confirmed") == before
+print("가족 권한 실제 Firestore 검증 성공: 동시 초대 수락 1명, 접근 해제, 포트폴리오·신호 보존")
+
 if os.getenv("FIREBASE_AUTH_EMULATOR_HOST") in {"127.0.0.1:9099", "localhost:9099"}:
     # 오직 로컬 Auth 에뮬레이터에만 존재하는 테스트 계정이다.
     signup = requests.post(

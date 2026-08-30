@@ -15,6 +15,7 @@ beforeEach(async () => {
     const db = ctx.firestore();
     await setDoc(doc(db,'access/owner'),{enabled:true});
     await setDoc(doc(db,'access/other'),{enabled:true});
+    await setDoc(doc(db,'access/wife'),{enabled:true,role:'member',ownerUid:'owner'});
     await setDoc(doc(db,'signals/confirmed'),{month:'2026-07'});
     await setDoc(doc(db,'internal/history'),{payload:'비공개 캐시'});
   });
@@ -98,4 +99,37 @@ test('수진 계산안은 가격 시각과 정상 수량으로 추가만 가능�
 test('수진 가격·잠금·장기 캐시를 클라이언트가 조작하지 못한다',async()=>{
   for(const path of ['market/sujin','status/sujinQuotes','internal/sujinHistory','internal/sujinQuotesLease','internal/sujinHistoryLease']) await assertFails(setDoc(doc(owner(),path),{payload:'fake'}));
   await assertFails(getDoc(doc(owner(),'internal/sujinHistory')));
+});
+
+test('공유 구성원은 두 포트폴리오와 이력을 같은 소유자 경로에서 사용한다',async()=>{
+  const wife=env.authenticatedContext('wife').firestore();
+  await assertSucceeds(setDoc(doc(wife,'users/owner'),profile()));
+  await assertSucceeds(getDoc(doc(wife,'users/owner')));
+  await assertSucceeds(setDoc(doc(wife,'users/owner/portfolios/sujin'),sujinProfile()));
+  await assertSucceeds(setDoc(doc(wife,'users/owner/portfolios/sujin/rebalances/shared'),sujinRecord()));
+  await assertSucceeds(getDoc(doc(owner(),'users/owner/portfolios/sujin/rebalances/shared')));
+  await assertSucceeds(setDoc(doc(wife,'users/owner/rebalances/shared'),{createdAt:serverTimestamp(),signalMonth:'2026-07',sp500:'SPY',equity:10000,kind:'계산안',lines:[]}));
+  await assertFails(deleteDoc(doc(wife,'users/owner')));
+  await assertFails(getDoc(doc(wife,'users/other')));
+  await assertFails(setDoc(doc(wife,'users/wife'),profile()));
+});
+
+test('클라이언트 관리자는 물론 구성원도 권한·초대·승인·감사 기록을 직접 변경할 수 없다',async()=>{
+  for(const uid of ['owner','wife','stranger']) {
+    const db=env.authenticatedContext(uid).firestore();
+    for(const path of ['access/wife','internal/family','familyInvites/invite','familyRequests/wife','familyAudit/one']) {
+      await assertFails(setDoc(doc(db,path),{enabled:true,role:'admin',ownerUid:uid}));
+      if(path!=='access/'+uid)await assertFails(getDoc(doc(db,path)));
+    }
+  }
+});
+
+test('이미 사용 중인 구성원도 접근 해제 직후 서버 읽기·쓰기가 거부된다',async()=>{
+  const wife=env.authenticatedContext('wife').firestore();
+  await assertSucceeds(setDoc(doc(wife,'users/owner'),profile()));
+  await env.withSecurityRulesDisabled(ctx=>updateDoc(doc(ctx.firestore(),'access/wife'),{enabled:false}));
+  await assertFails(getDoc(doc(wife,'users/owner')));
+  await assertFails(setDoc(doc(wife,'users/owner'),profile()));
+  await assertFails(getDoc(doc(wife,'market/sujin')));
+  await assertFails(setDoc(doc(wife,'users/owner/portfolios/sujin'),sujinProfile()));
 });
