@@ -4,6 +4,10 @@
 기준 원본: `main` 커밋 `7f4b4cac1070eef23cbcfd1369cd83c632b3d05b`.
 작업 브랜치: `feat/firebase-haa-webapp`. 자동 배포·자동 머지는 없습니다.
 
+2026-08-30 사용자 승인 후 별도 Firebase 프로젝트 `haa-portfolio-260830`에 배포했습니다.
+웹 주소: <https://haa-portfolio-260830.web.app/>. 기존 앱·프로젝트와 `main`은 변경하지 않았습니다.
+실제 확인 범위와 남은 운영 점검은 [검증 기록](docs/VALIDATION.md)을 참고하세요.
+
 ## 1. 전략과 원본 재사용 범위
 
 - **HAA 80% + BRK-B 20%**, HAA 안에서 균등 배분합니다.
@@ -168,7 +172,7 @@ python scripts/check_yahoo.py --as-of 2026-08-28T15:00:00Z
 
 ## 5. 실제 Firebase 배포 절차 — 사용자 승인 후 실행
 
-이 작업에서는 프로젝트 생성, 결제 연결, 배포, main 머지를 수행하지 않습니다. 아래는 승인 후 관리자가 실행할 절차입니다.
+아래는 새 환경에 재현하거나 변경사항을 재배포할 때의 절차입니다. 현재 전용 프로젝트 생성·Blaze 연결·첫 배포는 사용자 승인 후 완료했습니다. main 머지는 별도 승인이 필요합니다.
 
 1. Firebase 콘솔에서 별도 테스트/운영 프로젝트를 만들거나 선택하고 **Blaze 결제·예산 알림**을 설정합니다. Firestore는 기본 `(default)` DB를 프로덕션 모드로 생성합니다. Functions와 데이터 위치를 맞추려면 `us-central1` 지역을 선택하세요. 기존 DB 위치는 변경되지 않습니다.
 2. Authentication → Sign-in method에서 **Google**을 활성화합니다. 웹앱을 등록해 Firebase 웹 설정을 복사합니다. 배포 Hosting 도메인과 개발용 `localhost`가 승인 도메인인지 확인합니다.
