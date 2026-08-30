@@ -30,4 +30,16 @@ describe('한국어 웹앱', () => {
     fireEvent.click(screen.getByRole('button',{name:'저장 이력'}));
     expect(screen.getByRole('heading',{name:'월말 확정 신호'})).toBeTruthy();
   });
+  it('현근·수진 탭 전환 시 미저장 보유수량이 섞이거나 사라지지 않는다',()=>{
+    render(<App/>);
+    fireEvent.change(screen.getByLabelText('SPY 보유수량'),{target:{value:'3'}});
+    fireEvent.click(screen.getByRole('button',{name:/아내 · 수진/}));
+    expect(screen.queryByRole('heading',{name:'확정 신호'})).toBeNull();
+    fireEvent.change(screen.getByRole('spinbutton',{name:'수진 SPY 보유수량'}),{target:{value:'1'}});
+    fireEvent.click(screen.getByRole('button',{name:/남편 · 현근/}));
+    expect((screen.getByRole('spinbutton',{name:'SPY 보유수량'}) as HTMLInputElement).value).toBe('3');
+    fireEvent.click(screen.getByRole('button',{name:/아내 · 수진/}));
+    expect((screen.getByRole('spinbutton',{name:'수진 SPY 보유수량'}) as HTMLInputElement).value).toBe('1');
+    expect((screen.getByRole('button',{name:'시세 수동 갱신'}) as HTMLButtonElement).disabled).toBe(true);
+  });
 });

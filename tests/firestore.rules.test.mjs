@@ -21,6 +21,9 @@ beforeEach(async () => {
 });
 after(async () => { await env?.cleanup(); });
 const owner = () => env.authenticatedContext('owner').firestore();
+const sujinTickers=['QQQM','SPY','SPYM','JEPQ','BRK-B','IEF','TLT','GLD','PDBC'];
+const sujinProfile=()=>({strategy:'sujin-fixed-v1',holdings:Object.fromEntries(sujinTickers.map(t=>[t,0])),totalMode:'manual',totalBalance:10000,cash:0,quantityMode:'fractional',backtestStart:'',backtestEnd:'',updatedAt:serverTimestamp()});
+const sujinRecord=()=>({createdAt:serverTimestamp(),month:'2026-08',strategy:'sujin-fixed-v1',kind:'계산안',equity:10000,remainingCash:0,priceUpdatedAt:'2026-08-28T21:30:00Z',oldestPriceAt:'2026-08-28T20:00:00Z',quantityMode:'fractional',lines:sujinTickers.map(ticker=>({ticker,held:0,price:100,target:10,trade:10}))});
 
 test('미인증 사용자는 공용 신호를 읽을 수 없다', async () => {
   await assertFails(getDoc(doc(env.unauthenticatedContext().firestore(),'signals/confirmed')));
@@ -61,4 +64,38 @@ test('리밸런싱 계산안은 본인 경로에 추가만 가능하다', async 
   await assertFails(updateDoc(doc(owner(),'users/owner/rebalances/one'),{equity:1}));
   await assertFails(deleteDoc(doc(owner(),'users/owner/rebalances/one')));
   await assertFails(getDoc(doc(env.authenticatedContext('other').firestore(),'users/owner/rebalances/one')));
+});
+
+test('수진 저장이 현근 보유수량을 덮어쓰지 않는다',async()=>{
+  await assertSucceeds(setDoc(doc(owner(),'users/owner'),profile()));
+  await assertSucceeds(setDoc(doc(owner(),'users/owner/portfolios/sujin'),sujinProfile()));
+  const unchanged=await getDoc(doc(owner(),'users/owner'));
+  if(unchanged.data().sp500!=='SPY'||unchanged.data().cash!==10000) throw new Error('현근 변경됨');
+  await assertFails(setDoc(doc(owner(),'users/owner/portfolios/other'),sujinProfile()));
+});
+test('수진 데이터도 미인증·미승인·다른 계정 접근을 거부한다',async()=>{
+  for(const db of [env.unauthenticatedContext().firestore(),env.authenticatedContext('stranger').firestore(),env.authenticatedContext('other').firestore()]) {
+    await assertFails(getDoc(doc(db,'users/owner/portfolios/sujin')));
+    await assertFails(setDoc(doc(db,'users/owner/portfolios/sujin'),sujinProfile()));
+  }
+});
+test('수진 수량·전략·금액·추가 필드를 검증한다',async()=>{
+  const p=sujinProfile(),ref=doc(owner(),'users/owner/portfolios/sujin');
+  for(const update of [{cash:NaN},{totalBalance:-1},{strategy:'haa'},{quantityMode:'short'},{isAdmin:true},{holdings:{...p.holdings,QQQM:-1}}]) await assertFails(setDoc(ref,{...p,...update}));
+  await assertFails(deleteDoc(ref));
+});
+test('수진 계산안은 가격 시각과 정상 수량으로 추가만 가능하다',async()=>{
+  const ref=doc(owner(),'users/owner/portfolios/sujin/rebalances/one'),data=sujinRecord();
+  await assertSucceeds(setDoc(ref,data));
+  await assertFails(updateDoc(ref,{equity:1}));await assertFails(deleteDoc(ref));
+  await assertFails(getDoc(doc(env.authenticatedContext('other').firestore(),'users/owner/portfolios/sujin/rebalances/one')));
+  await assertFails(setDoc(doc(owner(),'users/owner/portfolios/sujin/rebalances/bad'),{...data,lines:data.lines.map(l=>({...l,target:-1}))}));
+  await assertFails(setDoc(doc(owner(),'users/owner/portfolios/sujin/rebalances/missing'),{...data,lines:[]}));
+  for(const update of [{held:NaN},{price:Infinity},{price:0},{target:'10'},{trade:false},{trade:Infinity},{held:-1},{target:1e10},{ticker:'FAKE'},{extra:1}]) {
+    await assertFails(setDoc(doc(owner(),'users/owner/portfolios/sujin/rebalances/malformed'),{...data,lines:data.lines.map((l,i)=>i===8?{...l,...update}:l)}));
+  }
+});
+test('수진 가격·잠금·장기 캐시를 클라이언트가 조작하지 못한다',async()=>{
+  for(const path of ['market/sujin','status/sujinQuotes','internal/sujinHistory','internal/sujinQuotesLease','internal/sujinHistoryLease']) await assertFails(setDoc(doc(owner(),path),{payload:'fake'}));
+  await assertFails(getDoc(doc(owner(),'internal/sujinHistory')));
 });

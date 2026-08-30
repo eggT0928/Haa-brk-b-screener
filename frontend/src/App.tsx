@@ -4,6 +4,7 @@ import { addDoc, collection, doc, limit, onSnapshot, orderBy, query, serverTimes
 import { apiHeaders, auth, configured, db, demo, login, logout } from './firebase';
 import { demoConfirmed, demoMarket, demoPreview } from './demo';
 import { Curve } from './Curve';
+import { SujinPortfolio } from './SujinPortfolio';
 import { buildPlan, defaultProfile, money, percent, timeLabel, validateProfile } from './portfolio';
 import { TICKERS, type Backtest, type Market, type Profile, type Rebalance, type Signal, type UpdateStatus } from './types';
 
@@ -55,6 +56,8 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [approved, setApproved] = useState(demo);
   const [tab, setTab] = useState('overview');
+  const [portfolioOwner, setPortfolioOwner] = useState('hyungeun');
+  const [sujinVisited, setSujinVisited] = useState(false);
   const [profile, setProfile] = useState<Profile>(defaultProfile);
   const [confirmed, setConfirmed] = useState<Signal | null>(demo ? demoConfirmed : null);
   const [preview, setPreview] = useState<Signal | null>(demo ? demoPreview : null);
@@ -77,6 +80,7 @@ export default function App() {
   useEffect(() => {
     if (demo || !db) return;
     setApproved(false); setProfile(defaultProfile()); dirty.current = false;
+    setPortfolioOwner('hyungeun'); setSujinVisited(false);
     setConfirmed(null); setPreview(null); setMarket(null); setHistory([]); setRebalances([]); setStatuses({}); setResult(null);
     requestGeneration.current++; setLoading(false); setError(''); setMessage('');
     if (!user) return;
@@ -133,18 +137,23 @@ export default function App() {
     finally { if(generation === requestGeneration.current) setLoading(false); }
   }
   return <>
-    <header><a className="brand" href="#"><span className="brand-mark">H</span><span>HAA <em>포트폴리오</em></span></a>
+    <header><a className="brand" href="#"><span className="brand-mark">H</span><span>부부 <em>리밸런서</em></span></a>
       <div className="account">{demo ? <span>화면 검토 모드</span> : user ? <><span>{user.displayName ?? user.email}</span><button className="quiet" onClick={() => logout().catch(e => setError(explainError(e)))}>로그아웃</button></> : <button disabled={!configured} onClick={() => login().catch(e => setError(explainError(e)))}>Google 로그인</button>}</div>
     </header>
     <main>
-      <div className="page-heading"><div><p className="eyebrow">HAA 80 / BRK-B 20</p><h1>월말의 원칙,<br className="mobile-only" /> 오늘의 포트폴리오.</h1><p>확정된 기준은 지키고, 다음 달의 변화를 살펴보세요.</p></div><div className="stamp"><span className="dot" />{failed ? '직전 성공값 표시 중' : market ? '공용 데이터 캐시' : '데이터 연결 대기'}<small>최근 성공 갱신<br />{timeLabel(market?.updatedAt)}</small></div></div>
+      {portfolioOwner==='hyungeun'&&<div className="page-heading"><div><p className="eyebrow">현근 · HAA 80 / BRK-B 20</p><h1>월말의 원칙,<br className="mobile-only" /> 오늘의 포트폴리오.</h1><p>확정된 기준은 지키고, 다음 달의 변화를 살펴보세요.</p></div><div className="stamp"><span className="dot" />{failed ? '직전 성공값 표시 중' : market ? '공용 데이터 캐시' : '데이터 연결 대기'}<small>현근 최근 성공 갱신<br />{timeLabel(market?.updatedAt)}</small></div></div>}
       {demo && <div className="notice">샘플 데이터입니다. 실제 시세·투자 신호가 아니며 로그인, 저장 및 백테스트 서버 호출은 비활성화되어 있습니다.</div>}
       {!demo && !configured && <div className="notice">Firebase 연결 설정이 아직 없습니다. README의 환경설정 절차를 완료한 뒤 다시 빌드하세요. 실제 신호는 표시하지 않습니다.</div>}
       {!demo && configured && !user && <div className="notice">로그인 후 승인된 계정만 신호와 개인 보유수량을 볼 수 있습니다.</div>}
       {!demo && user && !approved && <div className="notice">관리자 승인을 기다리고 있습니다. 관리자에게 이 사용자 ID를 전달하세요: <code>{user.uid}</code></div>}
       {error && <div className="error" role="alert">{error}<button className="quiet" onClick={() => setError('')}>닫기</button></div>}
-      {message && <div className="success" role="status">{message}</div>}
+      {message && portfolioOwner==='hyungeun' && <div className="success" role="status">{message}</div>}
       {approved && <>
+        <div className="portfolio-switch" role="group" aria-label="포트폴리오 선택">
+          <button aria-pressed={portfolioOwner==='hyungeun'} onClick={()=>setPortfolioOwner('hyungeun')}>남편 · 현근<span>HAA 80% + BRK-B 20%</span></button>
+          <button aria-pressed={portfolioOwner==='sujin'} onClick={()=>{setSujinVisited(true);setPortfolioOwner('sujin');}}>아내 · 수진<span>고정비중 월말 리밸런싱</span></button>
+        </div>
+        <div hidden={portfolioOwner!=='hyungeun'}>
         {failed && <div className="notice">갱신 실패: 마지막 성공 신호를 유지하고 있습니다. {Object.entries(statuses).filter(([,s])=>!s.ok).map(([j,s])=> `${j === 'daily' ? '일일' : '장중'} 시도 ${timeLabel(s.lastAttemptAt)}`).join(' / ')}</div>}
         <nav aria-label="포트폴리오 메뉴">{[['overview','신호 & 리밸런싱'],['backtest','장기 백테스트'],['history','저장 이력']].map(([id,label]) => <button key={id} className={tab===id?'active':''} onClick={()=>setTab(id)}>{label}</button>)}</nav>
         {tab === 'overview' && <>
@@ -185,8 +194,10 @@ export default function App() {
         </section>}
         {tab === 'history' && <div className="history-grid"><section className="panel"><h2>월말 확정 신호</h2><p className="micro">운영 시작 이후 저장한 확정본 · 최근 24건 · 신호 기준 티커 표시</p>{history.length?<div className="table-scroll"><table><thead><tr><th>신호 월</th><th>상태</th><th>목표 자산</th></tr></thead><tbody>{history.map(h=><tr key={h.month}><td>{h.month}</td><td>{h.regime}</td><td>{weightsLabel(h.weights)}</td></tr>)}</tbody></table></div>:<p className="empty">저장된 확정 이력이 없습니다.</p>}</section>
           <section className="panel"><h2>나의 리밸런싱 계산안</h2><p className="micro">최근 24건. 저장은 주문 체결을 의미하지 않습니다.</p>{rebalances.length?rebalances.map(r=><details key={r.id}><summary>{r.signalMonth} · {r.sp500} · {money(r.equity)} · {r.kind}</summary><div className="table-scroll"><table><thead><tr><th>종목</th><th>목표</th><th>매매</th><th>사용 가격</th></tr></thead><tbody>{r.lines.map(l=><tr key={l.ticker}><td>{l.ticker}</td><td>{l.target}</td><td>{l.trade}</td><td>{money(l.price)}</td></tr>)}</tbody></table></div></details>):<p className="empty">아직 저장한 계산안이 없습니다.</p>}</section></div>}
+        </div>
+        {sujinVisited&&<div hidden={portfolioOwner!=='sujin'}><SujinPortfolio key={user?.uid??'demo'} user={user} now={now} renderBacktest={data=><BacktestView result={data}/>}/></div>}
       </>}
-      <footer><span>HAA 포트폴리오</span><p>개인용 투자 보조 도구 · Yahoo Finance 시세는 지연되거나 수정될 수 있습니다.<br />예상 신호는 확정 신호가 아니며, 자동 주문을 실행하지 않습니다.</p></footer>
+      <footer><span>부부 리밸런서</span><p>개인용 투자 보조 도구 · Yahoo Finance 시세는 지연되거나 수정될 수 있습니다.<br />예상 신호는 확정 신호가 아니며, 자동 주문을 실행하지 않습니다.</p></footer>
     </main>
   </>;
 }

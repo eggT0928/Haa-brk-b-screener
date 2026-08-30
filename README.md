@@ -1,9 +1,12 @@
-# HAA 포트폴리오 · Firebase 웹앱
+# 부부 리밸런서 · HAA / 수진 포트폴리오 Firebase 웹앱
 
 기존 Streamlit `haa_brk-b_screener_web.py`를 유지하면서 Firebase 웹앱을 추가했습니다.
 기준 원본: `main` 커밋 `7f4b4cac1070eef23cbcfd1369cd83c632b3d05b`.
 작업 브랜치: `feat/firebase-haa-webapp`. 자동 배포·자동 머지는 없습니다.
 차트·모바일 후속 개선 브랜치: `feat/haa-interactive-charts`.
+수진 통합 브랜치: `feat/couple-rebalancer` — **통합 변경은 아직 운영 미배포·main 미병합**입니다.
+기존 자동 갱신 2개를 함께 사용하고 수동 갱신은 보조로 제공합니다. 별도 Scheduler는 추가하지 않습니다.
+전략 보존 범위·분리 저장·추가 검증·배포 체크리스트는 [수진 통합 안내](docs/SUJIN_INTEGRATION.md)를 참고하세요.
 
 2026-08-30 사용자 승인 후 별도 Firebase 프로젝트 `haa-portfolio-260830`에 배포했습니다.
 웹 주소: <https://haa-portfolio-260830.web.app/>. 기존 앱·프로젝트와 `main`은 변경하지 않았습니다.
@@ -49,7 +52,7 @@
 | Firebase Hosting | React/Vite 정적 웹, `/api/**` 함수 연결 | 정적 파일은 서버 실행 없이 제공 |
 | Firebase Authentication | Google 로그인 | 기기 간 사용자 식별 |
 | Firestore | 개인 설정·보유수량, 공용 신호·시세, 이력, 압축 장기 데이터 | 방문자마다 Yahoo를 조회하지 않음 |
-| Python Cloud Functions 2세대 | 예약 함수 2개 + 백테스트 HTTP 함수 1개 | 기존 Python/pandas 재사용, 별도 Docker 관리 불필요 |
+| Python Cloud Functions 2세대 | 공유 예약 함수 2개 + 백테스트·수동 갱신 HTTP 함수 1개 | 기존 Python/pandas 재사용, 별도 Docker 관리 불필요 |
 | Cloud Scheduler | 장중·일일 실행 | Firebase 배포가 예약 작업과 IAM 연결을 관리 |
 
 별도 Cloud Run 컨테이너도 가능하지만 Docker 이미지, 배포 명령, Scheduler 인증 연결을 따로 관리해야 합니다. Functions 2세대도 Cloud Run 기반이므로 이 규모에서는 Firebase CLI 한 흐름이 단순합니다. 프런트엔드용 상시 서버는 없습니다.
@@ -72,7 +75,8 @@
 ```text
 haa_brk-b_screener_web.py   기존 Streamlit 앱 (보존)
 frontend/                 한국어 React UI, 수량 계산, UI 테스트
-functions/main.py         예약 함수 2개, 인증된 백테스트 API
+functions/main.py         공유 예약 함수 2개, 인증된 백테스트·수동 갱신 API
+functions/sujin/          수진 고정비중 백테스트·공통 시세 재사용·독립 캐시
 functions/haa/core.py      13612U, 선택, 실전/백테스트 분리
 functions/haa/calendar.py  NYSE 휴장·조기폐장·서머타임 경계
 functions/haa/market.py    yfinance 조회, 데이터 검증, 재시도
@@ -115,7 +119,7 @@ source functions/venv/bin/activate
 pip install -r requirements-dev.txt
 npm ci
 pytest -q
-ruff check functions/haa functions/main.py tests/test_firebase*.py
+ruff check functions/haa functions/sujin functions/main.py tests/test_firebase*.py
 npm test
 npm run build
 npm run test:rules

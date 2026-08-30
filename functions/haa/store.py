@@ -82,6 +82,43 @@ class FirestoreStore:
             batch.set(self.db.document(path), value)
         batch.commit()
 
+    def acquire_manual(self, key, now):
+        # HAA 예약 잠금과 다른 문서. 실패한 조회도 60초 동안 연속 재실행을 막는다.
+        if key not in {"sujinQuotes", "sujinHistory"}:
+            raise ValueError("허용하지 않은 수동 갱신 작업입니다.")
+        ref = self.db.document(f"internal/{key}Lease")
+        token = str(uuid.uuid4())
+
+        @firestore.transactional
+        def acquire(transaction):
+            old = ref.get(transaction=transaction).to_dict() or {}
+            if old.get("until") and pd.Timestamp(old["until"]) > now:
+                return None
+            if old.get("lastAttempt") and (now - pd.Timestamp(old["lastAttempt"])).total_seconds() < 60:
+                return None
+            transaction.set(
+                ref,
+                {
+                    "token": token,
+                    "lastAttempt": now.isoformat(),
+                    "until": (now + pd.Timedelta(minutes=2)).isoformat(),
+                },
+            )
+            return token
+
+        return acquire(self.db.transaction())
+
+    def release_manual(self, key, token):
+        ref = self.db.document(f"internal/{key}Lease")
+
+        @firestore.transactional
+        def release(transaction):
+            old = ref.get(transaction=transaction).to_dict() or {}
+            if old.get("token") == token:
+                transaction.update(ref, {"token": None, "until": None})
+
+        release(self.db.transaction())
+
     def failure(self, job, now):
         # 성공 신호와 시세는 손대지 않아 다음 읽기가 직전 성공값으로 fallback된다.
         self.db.document(f"status/{job}").set(

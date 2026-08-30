@@ -30,7 +30,7 @@ jobs:
           STREAMLIT_BROWSER_GATHER_USAGE_STATS: 'false'
         run: pytest -q
       - name: 백엔드 기본 정적 검사
-        run: ruff check functions/haa functions/main.py tests/test_firebase*.py
+        run: ruff check functions/haa functions/sujin functions/main.py tests/test_firebase*.py
   web-and-rules:
     runs-on: ubuntu-latest
     timeout-minutes: 15
