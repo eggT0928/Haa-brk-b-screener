@@ -9,10 +9,10 @@ afterEach(cleanup);
 
 it('이메일 초대는 공유 편집 동의를 받은 후에만 등록한다',async()=>{
   render(<FamilyAccessPanel/>);await screen.findByText('owner@example.com');
-  fireEvent.change(screen.getByLabelText('초대할 Google 이메일'),{target:{value:'near9600@gmail.com'}});
+  fireEvent.change(screen.getByLabelText('초대할 Google 이메일'),{target:{value:'wife@example.com'}});
   const button=screen.getByRole('button',{name:'이메일 초대 등록'}) as HTMLButtonElement;
   expect(button.disabled).toBe(true);fireEvent.click(screen.getByRole('checkbox'));fireEvent.click(button);
-  await waitFor(()=>expect(fixture.request).toHaveBeenCalledWith('manage',{action:'invite',email:'near9600@gmail.com'}));
+  await waitFor(()=>expect(fixture.request).toHaveBeenCalledWith('manage',{action:'invite',email:'wife@example.com'}));
   expect(screen.getByText(/이메일은 자동 발송되지 않습니다/)).toBeTruthy();
 });
 it('접근 해제는 확인을 거치고 관리자 자기 해제 버튼은 없다',async()=>{

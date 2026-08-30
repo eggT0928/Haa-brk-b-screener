@@ -10,7 +10,7 @@ from haa import access
 NOW = pd.Timestamp("2026-08-30T00:00:00Z")
 
 
-def claims(uid="wife", email="near9600@gmail.com"):
+def claims(uid="wife", email="wife@example.com"):
     return {
         "uid": uid,
         "email": email,
@@ -62,7 +62,7 @@ def change(repo, action, **kwargs):
 
 def invited():
     repo = Repository()
-    change(repo, "invite", email="  NEAR9600@gmail.com  ")
+    change(repo, "invite", email="  WIFE@example.com  ")
     return repo
 
 
