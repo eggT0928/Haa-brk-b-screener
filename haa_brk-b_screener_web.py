@@ -1,5 +1,6 @@
 import streamlit as st
 import yfinance as yf
+import pandas_market_calendars as mcal
 import pandas as pd
 import numpy as np
 import json
@@ -149,13 +150,13 @@ def calculate_preview_momentum(data: pd.DataFrame, as_of: pd.Timestamp = None):
         raise ValueError("예상 기준일 이전의 가격 데이터가 없습니다.")
 
     preview_date = available.index[-1]
-    preview_month_end = preview_date + MonthEnd(0)
+    preview_month_end = requested_date.normalize() + MonthEnd(0)
     monthly_prices = get_month_end_prices(available)
-    current_prices = monthly_prices.loc[preview_month_end]
+    current_prices = available.ffill().iloc[-1]
 
     period_returns = {}
     for months in MOMENTUM_PERIODS:
-        base_month_end = preview_month_end - pd.DateOffset(months=months)
+        base_month_end = preview_month_end - MonthEnd(months)
         if base_month_end not in monthly_prices.index:
             raise ValueError(f"{months}개월 예상 신호 기준 월말 데이터가 없습니다.")
         period_returns[months] = current_prices / monthly_prices.loc[base_month_end] - 1
@@ -247,15 +248,22 @@ def run_screener(total_balance: float, sp500_rebalance_ticker: str = "SPY",
         pricing_data.index = pricing_data.index.tz_localize(None)
 
         # 2) 오늘 장중 가격(fast_info)을 마지막 행으로 추가
-        today = pd.Timestamp.now().normalize()
+        now_et = pd.Timestamp.now(tz="America/New_York")
+        today = now_et.tz_localize(None).normalize()
+        sessions = mcal.get_calendar("NYSE").schedule(start_date=today, end_date=today)
+        market_open = bool(len(sessions) and sessions.iloc[0].market_open <= now_et < sessions.iloc[0].market_close)
+        if sessions.empty:
+            reason = "주말" if today.weekday() >= 5 else "미국 공휴일·거래소 휴장일"
+            st.info(f"미국 증시 휴장 ({reason}): 새로운 시세가 제공되지 않아 마지막 거래일 가격으로 예상 신호를 계산합니다.")
+        elif not market_open:
+            st.info("미국 증시 정규장 시간 외입니다. 가장 최근 거래일 가격으로 예상 신호를 계산합니다.")
         fast_prices = {}
-        for t in download_tickers:
+        for t in (download_tickers if market_open else []):
             try:
                 ticker = yf.Ticker(t)
                 fast_prices[t] = ticker.fast_info["last_price"]
             except Exception:
-                if t in pricing_data.columns and len(pricing_data[t].dropna()) > 0:
-                    fast_prices[t] = pricing_data[t].dropna().iloc[-1]
+                pass
 
         if today not in pricing_data.index and fast_prices:
             pricing_data.loc[today] = pd.Series(fast_prices)

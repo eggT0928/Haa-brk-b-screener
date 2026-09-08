@@ -11,6 +11,30 @@ haa_app = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(haa_app)
 
 
+@pytest.mark.parametrize("as_of", ["2026-09-07", "2026-11-26", "2028-02-29", "2026-04-30"])
+def test_preview_handles_different_month_lengths_and_holidays(as_of):
+    date = pd.Timestamp(as_of)
+    dates = pd.date_range(end=date.to_period("M").start_time - pd.Timedelta(days=1), periods=14, freq="ME")
+    data = pd.DataFrame({"SPY": range(100, 114)}, index=dates, dtype=float)
+    quote_date = date - pd.Timedelta(days=3)
+    data.loc[quote_date] = 120.0
+    returns, _, actual, month = haa_app.calculate_preview_momentum(data, date)
+    assert actual == quote_date
+    assert month == date + pd.offsets.MonthEnd(0)
+    for months in (1, 3, 6, 12):
+        base = (date.to_period("M") - months).to_timestamp("M")
+        assert returns[months]["SPY"] == pytest.approx(120 / data.loc[base, "SPY"] - 1)
+
+
+def test_first_day_holiday_uses_last_quote_for_current_month_preview():
+    dates = pd.date_range("2025-01-31", "2026-01-31", freq="ME")
+    data = pd.DataFrame({"SPY": range(100, 113)}, index=dates, dtype=float)
+    returns, _, actual, month = haa_app.calculate_preview_momentum(data, "2026-02-01")
+    assert actual == pd.Timestamp("2026-01-31")
+    assert month == pd.Timestamp("2026-02-28")
+    assert returns[1]["SPY"] == 0
+
+
 def test_last_completed_month_excludes_the_current_month():
     assert haa_app.get_last_completed_month_end("2026-08-02") == pd.Timestamp("2026-07-31")
 
