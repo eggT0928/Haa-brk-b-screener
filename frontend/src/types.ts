@@ -4,7 +4,7 @@ export type Signal = {
   kind: 'confirmed' | 'preview'; month: string; asOf: string; updatedAt: string;
   regime: string; selected: string[]; weights: Record<string, number>;
   scores: Record<string, number>; returns: Record<string, Record<string, number>>;
-  oldestPriceAt?: string; sessionDate?: string;
+  oldestPriceAt?: string; sessionDate?: string; priceTimes?: Record<string, string>;
 };
 export type Profile = { holdings: Record<string, number>; cash: number; sp500: Sp500; backtestStart: string; backtestEnd: string };
 export type Market = { prices: Record<string, number>; priceTimes: Record<string, string>; updatedAt: string };

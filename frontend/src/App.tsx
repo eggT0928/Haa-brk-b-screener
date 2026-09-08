@@ -7,6 +7,7 @@ import { Curve } from './Curve';
 import { SujinPortfolio } from './SujinPortfolio';
 import { useFamilyAccess } from './familyAccess';
 import { FamilyAccessPanel } from './FamilyAccessPanel';
+import { marketSession } from './marketSession';
 import { buildPlan, defaultProfile, money, percent, timeLabel, validateProfile } from './portfolio';
 import { TICKERS, type Backtest, type Market, type Profile, type Rebalance, type Signal, type UpdateStatus } from './types';
 
@@ -21,7 +22,7 @@ function SignalCard({ signal, expected }: { signal: Signal | null; expected?: bo
       <p className="regime">{signal.regime} <span>TIP {percent(signal.scores.TIP)}</span></p>
       <div className="asset-chips">{Object.entries(signal.weights).map(([t,w]) => <span key={t}><strong>{t === 'CASH' ? '현금' : t}</strong><small>{(w * 100).toFixed(0)}%</small></span>)}</div>
       <p className="micro">{expected ? 'Yahoo 가격으로 1·3·6·12개월 모멘텀과 자산 선택을 다시 계산합니다. 실제 리밸런싱에는 사용하지 않습니다.' : 'HAA 80% + BRK-B 20%. 모멘텀 신호는 SPY, 실전 원자재는 PDBC 기준입니다.'}</p>
-      <div className="card-footer">{expected ? '최저 시세 시각' : '기준 종가 시각'}<br />{timeLabel(expected ? signal.oldestPriceAt ?? signal.asOf : signal.asOf)}</div>
+      <div className="card-footer">{expected ? '가장 최근 시세 시각' : '기준 종가 시각'}<br />{timeLabel(expected ? Object.values(signal.priceTimes ?? {}).sort().at(-1) ?? signal.oldestPriceAt ?? signal.asOf : signal.asOf)}{expected && signal.oldestPriceAt && <p className="micro">구성 종목 중 가장 오래된 시세: {timeLabel(signal.oldestPriceAt)}</p>}</div>
     </> : <div className="empty">아직 저장된 신호가 없습니다.<br />첫 예약 갱신 완료 후 표시됩니다.</div>}
   </section>;
 }
@@ -168,6 +169,8 @@ export default function App() {
         {failed && <div className="notice">갱신 실패: 마지막 성공 신호를 유지하고 있습니다. {Object.entries(statuses).filter(([,s])=>!s.ok).map(([j,s])=> `${j === 'daily' ? '일일' : '장중'} 시도 ${timeLabel(s.lastAttemptAt)}`).join(' / ')}</div>}
         <nav aria-label="포트폴리오 메뉴">{[['overview','신호 & 리밸런싱'],['backtest','장기 백테스트'],['history','저장 이력']].map(([id,label]) => <button key={id} className={tab===id?'active':''} onClick={()=>setTab(id)}>{label}</button>)}</nav>
         {tab === 'overview' && <>
+          <p className="notice" role="status">{marketSession(now).message}</p>
+          {preview && preview.month !== new Intl.DateTimeFormat('en-CA', {timeZone:'America/New_York',year:'numeric',month:'2-digit'}).format(now) && <p className="micro">현재 월의 새 시세가 아직 반영되지 않았습니다. 예상 신호의 표시 월과 시세 시각을 확인하세요.</p>}
           <div className="signal-grid"><SignalCard signal={confirmed}/><SignalCard signal={preview} expected/></div>
           <details className="panel momentum"><summary>전체 자산군 모멘텀 비교 <span>신호 기준 SPY · 1 / 3 / 6 / 12개월</span></summary>
             <div className="table-scroll"><table><thead><tr><th>자산</th><th>확정 점수</th><th>예상 점수</th>{[1,3,6,12].map(n=><th key={n}>예상 {n}개월</th>)}</tr></thead>
