@@ -14,6 +14,8 @@ from haa import access as family_access
 from haa.market import YahooMarket
 from haa.service import cached_backtest
 from haa.store import create_store
+from pension.market import PensionMarket
+from pension.service import refresh_quotes as pension_refresh
 from sujin.market import SujinMarket
 from sujin.service import RefreshBusy, refresh_quotes, refresh_with_haa
 from sujin.service import run_backtest as sujin_backtest
@@ -75,8 +77,13 @@ def api(req: https_fn.Request) -> https_fn.Response:
         "/api/sujin/backtest",
         "/sujin/backtest",
     )
+    pension_route = req.path in ("/api/pension/refresh", "/pension/refresh")
     access_route = req.path.removeprefix("/api") in ("/access/session", "/access/request", "/access/manage")
-    expected_method = "POST" if sujin_route or (access_route and not req.path.endswith("/manage")) else "GET"
+    expected_method = (
+        "POST"
+        if sujin_route or pension_route or (access_route and not req.path.endswith("/manage"))
+        else "GET"
+    )
     if req.method != expected_method and not (
         access_route and req.path.endswith("/manage") and req.method == "POST"
     ):
@@ -113,6 +120,13 @@ def api(req: https_fn.Request) -> https_fn.Response:
         access = db.get(f"access/{decoded['uid']}")
         if not access or access.get("enabled") is not True:
             return response({"error": "관리자의 사용자 승인이 필요합니다."}, 403)
+        if pension_route:
+            if req.content_length and req.content_length > 1024:
+                return response({"error": "요청 내용이 너무 큽니다."}, 413)
+            data = req.get_json(silent=True)
+            if data is not None and data != {}:
+                raise ValueError("연금 시세 갱신에는 추가 입력을 지정할 수 없습니다.")
+            return response(pension_refresh(db, PensionMarket(), pd.Timestamp.now(tz="UTC")))
         if sujin_route:
             if req.content_length and req.content_length > 4096:
                 return response({"error": "요청 내용이 너무 큽니다."}, 413)

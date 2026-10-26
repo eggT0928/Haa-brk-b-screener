@@ -1,4 +1,11 @@
 rules_version = '2';
+// 데이터 모델: access/{caller}는 서버 발급 enabled/ownerUid/role이며 본인 읽기만 가능하다.
+// users/{ownerUid}: HAA holdings12/cash/sp500/기간/updatedAt + 선택 quantityMode(구문서 정수).
+// portfolios/sujin: 수진 고정비중 설정. portfolios/pension: magic-pension-v1/KRW,
+// totalBalance/principal 0~1e12, holdings9 정수, weights9 합100%, targetOverrides9 null/정수.
+// 설정의 updatedAt와 이력의 createdAt는 서버시각. 모든 계산안은 공유 구성원 추가·읽기만 허용한다.
+// 연금 이력: month, strategy/currency/kind, equity/principal/remainingCash, weights9,
+// 가격 ISO시각2개와 고정순서9개 행(held/price/target). 종목은 전략 고정순서, 매매는 target-held로 복원한다.
 service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
@@ -54,23 +61,80 @@ service cloud.firestore {
         && sujinLine(lines[6], 'TLT') && sujinLine(lines[7], 'GLD')
         && sujinLine(lines[8], 'PDBC');
     }
+    function optionalQuantityMode(d) { return !('quantityMode' in d) || d.quantityMode in ['whole','fractional']; }
+    function validHaaProfile(d) {
+      return d.keys().hasOnly(['holdings','cash','sp500','quantityMode','backtestStart','backtestEnd','updatedAt'])
+        && validHoldings(d.holdings) && amount(d.cash) && d.sp500 in ['SPY','SPYM']
+        && optionalQuantityMode(d) && dateText(d.backtestStart) && dateText(d.backtestEnd)
+        && d.updatedAt == request.time;
+    }
+    function pensionMap(m) {
+      let codes = ['379800','294400','283580','453810','411060','385560','308620','453850','449170'];
+      return m is map && m.keys().hasOnly(codes) && m.keys().hasAll(codes);
+    }
+    function whole(n) { return n is int && n >= 0 && n <= 1000000000; }
+    function nullableWhole(n) { return n == null || whole(n); }
+    function pensionHoldings(h) {
+      return pensionMap(h) && whole(h['379800']) && whole(h['294400']) && whole(h['283580'])
+        && whole(h['453810']) && whole(h['411060']) && whole(h['385560'])
+        && whole(h['308620']) && whole(h['453850']) && whole(h['449170']);
+    }
+    function pensionOverrides(h) {
+      return pensionMap(h) && nullableWhole(h['379800']) && nullableWhole(h['294400']) && nullableWhole(h['283580'])
+        && nullableWhole(h['453810']) && nullableWhole(h['411060']) && nullableWhole(h['385560'])
+        && nullableWhole(h['308620']) && nullableWhole(h['453850']) && nullableWhole(h['449170']);
+    }
+    function pensionWeights(w) {
+      // 반복 필드 참조와 함수 호출을 줄여 9개 이력 행을 모두 검증해도 평가 한도 안에 둔다.
+      let a=w['379800']; let b=w['294400']; let c=w['283580'];
+      let d=w['453810']; let e=w['411060']; let f=w['385560'];
+      let g=w['308620']; let h=w['453850']; let i=w['449170'];
+      return pensionMap(w) && a>=0 && a<=1 && b>=0 && b<=1 && c>=0 && c<=1
+        && d>=0 && d<=1 && e>=0 && e<=1 && f>=0 && f<=1
+        && g>=0 && g<=1 && h>=0 && h<=1 && i>=0 && i<=1
+        && math.abs(a+b+c+d+e+f+g+h+i-1) < 0.00000001;
+    }
+    function validPensionProfile(d) {
+      return d.keys().hasOnly(['strategy','currency','totalBalance','principal','holdings','weights','targetOverrides','updatedAt'])
+        && d.strategy == 'magic-pension-v1' && d.currency == 'KRW'
+        && amount(d.totalBalance) && amount(d.principal)
+        && pensionHoldings(d.holdings) && pensionWeights(d.weights) && pensionOverrides(d.targetOverrides)
+        && d.updatedAt == request.time;
+    }
+    function pensionLine(l) {
+      let held=l.held;
+      let target=l.target;
+      let price=l.price;
+      // 필수 3개 필드를 모두 참조하고 개수를 고정한다. 종목과 매매량은 중복 저장하지 않는다.
+      return l.size()==3
+        && held is int && held>=0 && held<=1000000000 && target is int && target>=0 && target<=1000000000
+        && price>0 && price<=1000000000000;
+    }
+    function validPensionRecord(d) {
+      let lines=d.lines;
+      return d.keys().hasOnly(['createdAt','month','strategy','currency','kind','equity','principal','remainingCash','weights','priceUpdatedAt','oldestPriceAt','lines'])
+        && d.createdAt==request.time && d.month.matches('^[0-9]{4}-[0-9]{2}$')
+        && d.strategy=='magic-pension-v1' && d.currency=='KRW' && d.kind=='계산안'
+        && amount(d.equity) && d.equity>0 && amount(d.principal) && amount(d.remainingCash) && d.remainingCash<=d.equity
+        && pensionWeights(d.weights) && priceTime(d.priceUpdatedAt) && priceTime(d.oldestPriceAt)
+        && lines is list && lines.size()==9
+        && pensionLine(lines[0]) && pensionLine(lines[1]) && pensionLine(lines[2])
+        && pensionLine(lines[3]) && pensionLine(lines[4]) && pensionLine(lines[5])
+        && pensionLine(lines[6]) && pensionLine(lines[7]) && pensionLine(lines[8]);
+    }
     match /access/{uid} {
       allow get: if signedIn() && request.auth.uid == uid;
       allow list, write: if false;
     }
     match /users/{uid} {
       allow read: if owner(uid);
-      allow create, update: if owner(uid)
-        && request.resource.data.keys().hasOnly(['holdings','cash','sp500','backtestStart','backtestEnd','updatedAt'])
-        && validHoldings(request.resource.data.holdings) && amount(request.resource.data.cash)
-        && request.resource.data.sp500 in ['SPY','SPYM']
-        && dateText(request.resource.data.backtestStart) && dateText(request.resource.data.backtestEnd)
-        && request.resource.data.updatedAt == request.time;
+      allow create, update: if owner(uid) && validHaaProfile(request.resource.data);
       allow delete: if owner(uid) && request.auth.uid == uid;
       match /rebalances/{id} {
         allow read: if owner(uid);
         allow create: if owner(uid)
-          && request.resource.data.keys().hasOnly(['createdAt','signalMonth','sp500','equity','lines','kind'])
+          && request.resource.data.keys().hasOnly(['createdAt','signalMonth','sp500','quantityMode','equity','lines','kind'])
+          && optionalQuantityMode(request.resource.data)
           && request.resource.data.createdAt == request.time
           && request.resource.data.signalMonth.matches('^[0-9]{4}-[0-9]{2}$')
           && request.resource.data.sp500 in ['SPY','SPYM']
@@ -95,6 +159,16 @@ service cloud.firestore {
         match /rebalances/{id} {
           allow read: if owner(uid);
           allow create: if owner(uid) && validSujinRecord(request.resource.data);
+          allow update, delete: if false;
+        }
+      }
+      match /portfolios/pension {
+        allow read: if owner(uid);
+        allow create, update: if owner(uid) && validPensionProfile(request.resource.data);
+        allow delete: if false;
+        match /rebalances/{id} {
+          allow read: if owner(uid);
+          allow create: if owner(uid) && validPensionRecord(request.resource.data);
           allow update, delete: if false;
         }
       }

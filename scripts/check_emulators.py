@@ -65,6 +65,23 @@ sujin.fail = False
 assert run_backtest(store, sujin, now + pd.Timedelta(minutes=3))["basis"] == "SPY 10% + SPYM 10%"
 print("수진 실제 Firestore 통합 검증 성공: 독립 잠금·토큰·재시도 제한·캐시 보존·장기 이력")
 
+# 연금은 미국 예약 갱신과 분리된 수동 캐시다. 실제 Firestore 잠금·보존 경로를 검증한다.
+from pension.service import refresh_quotes as pension_refresh  # noqa: E402
+from test_firebase_pension import FakePension  # noqa: E402
+
+pension_now = pd.Timestamp("2026-10-26T03:00:00Z")
+pension_provider = FakePension()
+haa_before, sujin_before = store.get("market/current"), store.get("market/sujin")
+pension_ok = pension_refresh(store, pension_provider, pension_now)
+assert pension_ok["market"]["currency"] == "KRW" and pension_ok["source"] == "refreshed"
+assert pension_refresh(store, pension_provider, pension_now)["source"] == "cache"
+pension_provider.fail = True
+pension_fallback = pension_refresh(store, pension_provider, pension_now + pd.Timedelta(minutes=20))
+assert pension_fallback["source"] == "fallback" and pension_fallback["market"] == pension_ok["market"]
+assert store.get("market/current") == haa_before and store.get("market/sujin") == sujin_before
+assert store.get("status/pensionQuotes")["ok"] is False
+print("연금 실제 Firestore 검증 성공: 원화 시세·수동 캐시·실패 기준시각 보존·미국 포트폴리오 분리")
+
 # 이메일 초대의 두 동시 수락 중 하나만 공유 구성원으로 등록되는지 실제 트랜잭션으로 검증한다.
 from concurrent.futures import ThreadPoolExecutor  # noqa: E402
 from haa import access as family  # noqa: E402

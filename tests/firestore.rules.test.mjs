@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { after, before, beforeEach, test } from 'node:test';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
-import { collection, deleteDoc, doc, getDoc, getDocs, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
+import { collection, deleteDoc, deleteField, doc, getDoc, getDocs, limit, orderBy, query, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 
 let env;
 const tickers = ['SPY','SPYM','VEA','VWO','IWM','BIL','IEF','TLT','TIP','PDBC','VNQ','BRK-B'];
@@ -25,6 +25,15 @@ const owner = () => env.authenticatedContext('owner').firestore();
 const sujinTickers=['QQQM','SPY','SPYM','JEPQ','BRK-B','IEF','TLT','GLD','PDBC'];
 const sujinProfile=()=>({strategy:'sujin-fixed-v1',holdings:Object.fromEntries(sujinTickers.map(t=>[t,0])),totalMode:'manual',totalBalance:10000,cash:0,quantityMode:'fractional',backtestStart:'',backtestEnd:'',updatedAt:serverTimestamp()});
 const sujinRecord=()=>({createdAt:serverTimestamp(),month:'2026-08',strategy:'sujin-fixed-v1',kind:'계산안',equity:10000,remainingCash:0,priceUpdatedAt:'2026-08-28T21:30:00Z',oldestPriceAt:'2026-08-28T20:00:00Z',quantityMode:'fractional',lines:sujinTickers.map(ticker=>({ticker,held:0,price:100,target:10,trade:10}))});
+const pensionCodes=['379800','294400','283580','453810','411060','385560','308620','453850','449170'];
+const pensionWeights=()=>Object.fromEntries(pensionCodes.map((code,i)=>[code,[.24,.08,.08,.08,.19,.14,.07,.07,.05][i]]));
+const pensionProfile=()=>({strategy:'magic-pension-v1',currency:'KRW',totalBalance:1000000,principal:800000,
+  holdings:Object.fromEntries(pensionCodes.map(code=>[code,0])),weights:pensionWeights(),
+  targetOverrides:Object.fromEntries(pensionCodes.map(code=>[code,null])),updatedAt:serverTimestamp()});
+const pensionRecord=()=>({createdAt:serverTimestamp(),month:'2026-10',strategy:'magic-pension-v1',currency:'KRW',kind:'계산안',equity:1000000,principal:800000,remainingCash:0,
+  weights:pensionWeights(),priceUpdatedAt:'2026-10-26T06:30:00Z',oldestPriceAt:'2026-10-26T06:30:00Z',
+  // 종목은 고정된 pensionCodes 순서로 결정하고 매매수량은 target-held로 복원한다.
+  lines:pensionCodes.map(code=>({held:0,price:10000,target:Math.round(pensionWeights()[code]*100)}))});
 
 test('미인증 사용자는 공용 신호를 읽을 수 없다', async () => {
   await assertFails(getDoc(doc(env.unauthenticatedContext().firestore(),'signals/confirmed')));
@@ -132,4 +141,120 @@ test('이미 사용 중인 구성원도 접근 해제 직후 서버 읽기·쓰�
   await assertFails(setDoc(doc(wife,'users/owner'),profile()));
   await assertFails(getDoc(doc(wife,'market/sujin')));
   await assertFails(setDoc(doc(wife,'users/owner/portfolios/sujin'),sujinProfile()));
+});
+
+test('HAA 구문서와 정수·소수점 설정을 모두 저장하고 잘못된 단위는 생성·갱신에서 거부한다',async()=>{
+  const ref=doc(owner(),'users/owner');
+  await assertSucceeds(setDoc(ref,profile()));
+  for(const quantityMode of ['whole','fractional']){
+    await assertSucceeds(setDoc(ref,{...profile(),quantityMode}));
+    await assertSucceeds(updateDoc(ref,{quantityMode,updatedAt:serverTimestamp()}));
+  }
+  for(const quantityMode of [null,0,true,'unsupported']){
+    await assertSucceeds(deleteDoc(ref));
+    await assertFails(setDoc(doc(owner(),'users/owner'),{...profile(),quantityMode}));
+    await assertSucceeds(setDoc(ref,profile()));
+    await assertFails(updateDoc(ref,{quantityMode,updatedAt:serverTimestamp()}));
+  }
+  await assertSucceeds(updateDoc(ref,{quantityMode:deleteField(),updatedAt:serverTimestamp()}));
+});
+
+test('HAA 계산안은 구형·신형 수량 단위를 보존하고 이력 변경은 허용하지 않는다',async()=>{
+  const data={createdAt:serverTimestamp(),signalMonth:'2026-10',sp500:'SPYM',equity:10000,kind:'계산안',lines:[]};
+  for(const [id,quantityMode] of [['legacy',undefined],['whole','whole'],['fractional','fractional']]){
+    const ref=doc(owner(),'users/owner/rebalances/'+id);
+    await assertSucceeds(setDoc(ref,{...data,...(quantityMode?{quantityMode}:{})}));
+    await assertSucceeds(getDoc(ref));
+    await assertFails(updateDoc(ref,{quantityMode:'fractional'}));
+  }
+  for(const quantityMode of [null,true,'0.01'])await assertFails(setDoc(doc(owner(),'users/owner/rebalances/bad-mode'),{...data,quantityMode}));
+});
+
+test('공유 구성원은 연금 설정과 계산안을 같은 소유자 경로에 저장하고 최근 이력을 조회한다',async()=>{
+  const wife=env.authenticatedContext('wife').firestore(),ref=doc(wife,'users/owner/portfolios/pension');
+  await assertSucceeds(setDoc(doc(owner(),'users/owner'),profile()));
+  await assertSucceeds(setDoc(doc(owner(),'users/owner/portfolios/sujin'),sujinProfile()));
+  await assertSucceeds(setDoc(ref,pensionProfile()));
+  await assertSucceeds(updateDoc(ref,{'targetOverrides.379800':0,updatedAt:serverTimestamp()}));
+  await assertSucceeds(updateDoc(ref,{'targetOverrides.379800':null,updatedAt:serverTimestamp()}));
+  await assertSucceeds(getDoc(doc(owner(),'users/owner/portfolios/pension')));
+  await assertSucceeds(setDoc(doc(wife,'users/owner/portfolios/pension/rebalances/shared'),pensionRecord()));
+  await assertSucceeds(getDocs(query(collection(owner(),'users/owner/portfolios/pension/rebalances'),orderBy('createdAt','desc'),limit(24))));
+  await assertFails(deleteDoc(ref));
+  const haa=await getDoc(doc(owner(),'users/owner')),sujin=await getDoc(doc(owner(),'users/owner/portfolios/sujin'));
+  if(haa.data().cash!==10000||sujin.data().strategy!=='sujin-fixed-v1')throw new Error('연금 저장이 다른 포트폴리오를 변경했습니다.');
+});
+
+test('미인증·미승인·다른 가족은 연금 설정과 이력을 읽거나 변경할 수 없다',async()=>{
+  await assertSucceeds(setDoc(doc(owner(),'users/owner/portfolios/pension'),pensionProfile()));
+  await assertSucceeds(setDoc(doc(owner(),'users/owner/portfolios/pension/rebalances/one'),pensionRecord()));
+  for(const db of [env.unauthenticatedContext().firestore(),env.authenticatedContext('stranger').firestore(),env.authenticatedContext('other').firestore()]){
+    await assertFails(getDoc(doc(db,'users/owner/portfolios/pension')));
+    await assertFails(getDocs(collection(db,'users/owner/portfolios/pension/rebalances')));
+    await assertFails(getDoc(doc(db,'users/owner/portfolios/pension/rebalances/one')));
+    await assertFails(setDoc(doc(db,'users/owner/portfolios/pension'),pensionProfile()));
+    await assertFails(updateDoc(doc(db,'users/owner/portfolios/pension'),{principal:1,updatedAt:serverTimestamp()}));
+    await assertFails(setDoc(doc(db,'users/owner/portfolios/pension/rebalances/new'),pensionRecord()));
+    await assertFails(deleteDoc(doc(db,'users/owner/portfolios/pension')));
+  }
+  const wife=env.authenticatedContext('wife').firestore();
+  await assertFails(setDoc(doc(wife,'users/wife/portfolios/pension'),pensionProfile()));
+  await assertFails(setDoc(doc(wife,'users/other/portfolios/pension'),pensionProfile()));
+});
+
+test('연금 설정은 생성·덮어쓰기·부분 갱신에서 타입·필수 필드·범위를 모두 검증한다',async()=>{
+  const p=pensionProfile(),ref=doc(owner(),'users/owner/portfolios/pension');
+  await assertSucceeds(setDoc(ref,p));
+  const missingHolding={...p.holdings},missingWeight={...p.weights},missingOverride={...p.targetOverrides};
+  delete missingHolding['449170'];delete missingWeight['449170'];delete missingOverride['449170'];
+  const invalid=[{currency:'USD'},{strategy:'haa'},{totalBalance:-1},{totalBalance:Infinity},{principal:NaN},{principal:1e13},
+    {role:'admin'},{ownerUid:'other'},{extra:'x'.repeat(10000)},{updatedAt:'2026-10-26T06:30:00Z'},
+    {holdings:{...p.holdings,'379800':.5}},{holdings:{...p.holdings,'379800':-1}},{holdings:{...p.holdings,'379800':1e10}},
+    {holdings:{...p.holdings,FAKE:1}},{weights:{...p.weights,'379800':.23}},{weights:{...p.weights,'379800':NaN}},
+    {weights:{...p.weights,'379800':Infinity}},{weights:{...p.weights,'379800':true}},{weights:{...p.weights,'379800':'0.24'}},
+    {targetOverrides:{...p.targetOverrides,'379800':.5}},{targetOverrides:{...p.targetOverrides,'379800':false}},
+    {targetOverrides:{...p.targetOverrides,'379800':-1}},{targetOverrides:{...p.targetOverrides,'379800':'0'}},
+    {holdings:missingHolding},{weights:missingWeight},{targetOverrides:missingOverride}];
+  for(const patch of invalid){
+    await env.withSecurityRulesDisabled(ctx=>deleteDoc(doc(ctx.firestore(),'users/owner/portfolios/pension')));
+    await assertFails(setDoc(ref,{...p,...patch}));
+    await assertSucceeds(setDoc(ref,p));
+    await assertFails(setDoc(ref,{...p,...patch}));
+    await assertFails(updateDoc(ref,{...patch,...('updatedAt' in patch?{}:{updatedAt:serverTimestamp()})}));
+  }
+  for(const key of ['strategy','currency','totalBalance','principal','holdings','weights','targetOverrides','updatedAt']){
+    const missing={...p};delete missing[key];
+    await assertFails(setDoc(ref,missing));
+    await assertFails(updateDoc(ref,{[key]:deleteField(),...('updatedAt'===key?{}:{updatedAt:serverTimestamp()})}));
+  }
+});
+
+test('연금 계산안은 고정 9개 행의 정수·시세를 검증하며 추가 후 변경·삭제를 차단한다',async()=>{
+  const data=pensionRecord(),ref=doc(owner(),'users/owner/portfolios/pension/rebalances/one');
+  await assertSucceeds(setDoc(ref,data));
+  await assertFails(updateDoc(ref,{equity:2000000}));
+  await assertFails(deleteDoc(ref));
+  const malformed=[{held:NaN},{held:.5},{held:-1},{price:0},{price:NaN},{price:Infinity},{price:'10000'},{price:true},
+    {target:'5'},{target:5.5},{trade:false},{trade:0},{trade:Infinity},{ticker:'FAKE'},{extra:1}];
+  for(const [i,patch] of malformed.entries())await assertFails(setDoc(doc(owner(),'users/owner/portfolios/pension/rebalances/malformed-'+i),{...data,lines:data.lines.map((line,index)=>index===8?{...line,...patch}:line)}));
+  // 9개 위치 모두 검증하는지 확인한다. 종목·매매수량 필드는 저장하지 않는다.
+  for(let index=0;index<9;index++)await assertFails(setDoc(doc(owner(),'users/owner/portfolios/pension/rebalances/row-'+index),{...data,lines:data.lines.map((line,i)=>i===index?{...line,target:.5}:line)}));
+  const missingPrice={...data.lines[0]};delete missingPrice.price;
+  for(const [i,patch] of [{lines:data.lines.slice(0,8)},{lines:[...data.lines,data.lines[0]]},{lines:[missingPrice,...data.lines.slice(1)]},{createdAt:'2026-10-26T06:30:00Z'},
+    {currency:'USD'},{remainingCash:1000001},{priceUpdatedAt:'invalid'},{oldestPriceAt:'x'.repeat(10000)},
+    {weights:{...data.weights,'379800':.25}},{role:'admin'}].entries())await assertFails(setDoc(doc(owner(),'users/owner/portfolios/pension/rebalances/schema-'+i),{...data,...patch}));
+  const missing={...data};delete missing.principal;
+  await assertFails(setDoc(doc(owner(),'users/owner/portfolios/pension/rebalances/missing'),missing));
+});
+
+test('연금 접근도 구성원 해제 직후 거부하며 가격·상태·잠금 문서는 직접 쓸 수 없다',async()=>{
+  const wife=env.authenticatedContext('wife').firestore();
+  await assertSucceeds(setDoc(doc(wife,'users/owner/portfolios/pension'),pensionProfile()));
+  for(const path of ['market/pension','status/pensionQuotes','internal/pensionQuotesLease'])await assertFails(setDoc(doc(wife,path),{prices:{'379800':1}}));
+  await assertFails(getDoc(doc(wife,'internal/pensionQuotesLease')));
+  await env.withSecurityRulesDisabled(ctx=>updateDoc(doc(ctx.firestore(),'access/wife'),{enabled:false}));
+  await assertFails(getDoc(doc(wife,'users/owner/portfolios/pension')));
+  await assertFails(setDoc(doc(wife,'users/owner/portfolios/pension'),pensionProfile()));
+  await assertFails(setDoc(doc(wife,'users/owner/portfolios/pension/rebalances/after-revoke'),pensionRecord()));
+  await assertFails(getDoc(doc(wife,'market/pension')));
 });

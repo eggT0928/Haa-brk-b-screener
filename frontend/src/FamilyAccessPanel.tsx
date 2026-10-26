@@ -35,12 +35,12 @@ export function FamilyAccessPanel(){
   }
   return <section className="panel family-panel" aria-label="가족 초대 및 권한 관리">
     <div className="section-title"><h2>가족·권한 관리</h2><button onClick={reload} disabled={busy}>목록 새로고침</button></div>
-    <p>관리자만 초대·승인·접근 해제를 할 수 있습니다. 구성원은 현근·수진의 보유수량과 이력을 함께 보고 수정할 수 있지만, 다른 사람을 승인할 수는 없습니다.</p>
+    <p>관리자만 초대·승인·접근 해제를 할 수 있습니다. 구성원은 현근·수진·연금의 보유수량과 이력을 함께 보고 수정할 수 있지만, 다른 사람을 승인할 수는 없습니다.</p>
     <p className="notice">Firebase 프로젝트 소유자 권한과는 별개입니다. 여기서 초대해도 Firebase 관리 권한은 부여하지 않습니다.</p>
     {error&&<p className="error" role="alert">{error}</p>}{message&&<p className="success" role="status">{message}</p>}
     <form className="family-invite" onSubmit={e=>{e.preventDefault();if(consent&&!busy)void apply({action:'invite',email});}}>
       <label>초대할 Google 이메일<input type="email" required maxLength={254} value={email} onChange={e=>setEmail(e.target.value)} disabled={busy} placeholder="example@gmail.com"/></label>
-      <label className="check"><input type="checkbox" checked={consent} onChange={e=>setConsent(e.target.checked)} disabled={busy}/>이 계정에 두 포트폴리오의 조회·편집 권한을 허용합니다.</label>
+      <label className="check"><input type="checkbox" checked={consent} onChange={e=>setConsent(e.target.checked)} disabled={busy}/>이 계정에 현근·수진·연금 포트폴리오의 조회·편집 권한을 허용합니다.</label>
       <button className="primary" disabled={busy||!consent||!email}>이메일 초대 등록</button>
     </form>
     <p className="micro">초대는 14일간 유효합니다. 이메일은 자동 발송되지 않습니다. 아래 링크를 전달하면 등록된 이메일의 Google 로그인 시 자동 승인됩니다.</p>

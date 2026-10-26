@@ -1,11 +1,13 @@
 import { TICKERS, type Market, type Profile, type Signal } from './types';
 
 export function defaultProfile(): Profile {
-  return { holdings: Object.fromEntries(TICKERS.map(t => [t, 0])), cash: 10000, sp500: 'SPY', backtestStart: '', backtestEnd: '' };
+  return { holdings: Object.fromEntries(TICKERS.map(t => [t, 0])), cash: 10000, sp500: 'SPY', quantityMode: 'whole', backtestStart: '', backtestEnd: '' };
 }
 
 export function validateProfile(profile: Profile) {
   if (!['SPY', 'SPYM'].includes(profile.sp500)) throw new Error('실전 ETF를 선택하세요.');
+  // 기존 저장 문서에는 수량 단위가 없다. 해당 문서는 종전처럼 정수 목표로 계산한다.
+  if (profile.quantityMode !== undefined && !['whole','fractional'].includes(profile.quantityMode)) throw new Error('HAA 수량 단위를 선택하세요.');
   if (!Number.isFinite(profile.cash) || profile.cash < 0 || profile.cash > 1e12) throw new Error('현금 금액을 확인하세요.');
   if (Object.keys(profile.holdings).some(t => !(TICKERS as readonly string[]).includes(t))) throw new Error('지원하지 않는 보유종목입니다.');
   for (const ticker of TICKERS) {
@@ -27,7 +29,10 @@ export function buildPlan(profile: Profile, signal: Signal, market: Market) {
   const equity = profile.cash + tickers.reduce((sum, t) => sum + profile.holdings[t] * market.prices[t], 0);
   const lines = tickers.map(ticker => {
     const price = market.prices[ticker], held = profile.holdings[ticker], weight = weights[ticker] ?? 0;
-    const target = Math.floor(equity * weight / price);
+    // 소수점 모드는 0.000001주 단위로 내림한다. 반올림으로 목표 배분 금액을 초과하지 않는다.
+    const units = profile.quantityMode === 'fractional' ? 1e6 : 1;
+    const target = Math.floor(equity * weight / price * units) / units;
+    if (!Number.isFinite(target) || target < 0 || target > 1e9) throw new Error(`${ticker} 목표수량이 허용 범위를 넘었습니다.`);
     const trade = Math.round((target - held) * 1e8) / 1e8;
     return { ticker, held, price, weight, target, trade, amount: trade * price };
   });
@@ -35,5 +40,7 @@ export function buildPlan(profile: Profile, signal: Signal, market: Market) {
 }
 
 export const percent = (n: number | null | undefined) => n == null ? '—' : `${(n * 100).toFixed(2)}%`;
+// 목표는 소수점 6자리이며, 기존 소수 보유분 매매는 8자리까지 보존해 표시한다.
+export const quantityLabel = (n: number) => new Intl.NumberFormat('ko-KR', {useGrouping:false,maximumFractionDigits:8}).format(n);
 export const money = (n: number) => new Intl.NumberFormat('ko-KR', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(n);
 export const timeLabel = (s?: string) => s ? new Date(s).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', hour12: false }) + ' KST' : '아직 없음';

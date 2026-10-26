@@ -4,6 +4,12 @@ vi.mock('./firebase', () => ({ demo: true, configured: false, auth: null, db: nu
 import App from './App';
 
 afterEach(cleanup);
+it('연금 탭을 오가도 현근·연금 미저장 입력을 따로 유지한다',()=>{
+  render(<App/>);fireEvent.change(screen.getByLabelText('SPY 보유수량'),{target:{value:'3'}});
+  fireEvent.click(screen.getByRole('button',{name:/연금 포트폴리오/}));fireEvent.change(screen.getByLabelText('연금 379800 보유수량'),{target:{value:'7'}});
+  fireEvent.click(screen.getByRole('button',{name:/남편 · 현근/}));expect((screen.getByLabelText('SPY 보유수량') as HTMLInputElement).value).toBe('3');
+  fireEvent.click(screen.getByRole('button',{name:/연금 포트폴리오/}));expect((screen.getByLabelText('연금 379800 보유수량') as HTMLInputElement).value).toBe('7');
+});
 describe('한국어 웹앱', () => {
   it('샘플임을 명시하고 확정과 예상을 분리한다', () => {
     render(<App />);
@@ -18,6 +24,15 @@ describe('한국어 웹앱', () => {
     expect(screen.getByText('0 → 28')).toBeTruthy();
     fireEvent.change(screen.getByLabelText('SPYM 보유수량'),{target:{value:'10'}});
     expect(screen.getByText('10 → 30')).toBeTruthy();
+  });
+  it('HAA 소수점 단위는 목표·매매 수량에 적용되고 정수로 다시 전환할 수 있다',()=>{
+    render(<App/>);
+    fireEvent.change(screen.getByLabelText('HAA 수량 단위'),{target:{value:'fractional'}});
+    expect(screen.getByText('0 → 3.333333')).toBeTruthy();
+    expect(screen.getByText('+3.333333')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('HAA 수량 단위'),{target:{value:'whole'}});
+    expect(screen.getByText('0 → 3')).toBeTruthy();
+    expect(screen.queryByText('0 → 3.333333')).toBeNull();
   });
   it('백테스트 기간과 이력 화면을 전환한다', () => {
     render(<App />);

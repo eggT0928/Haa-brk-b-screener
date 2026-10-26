@@ -1,7 +1,8 @@
-# 부부 리밸런서 · HAA / 수진 포트폴리오 Firebase 웹앱
+# 부부 리밸런서 · HAA / 수진 / 연금 Firebase 웹앱
 
 기존 Streamlit `haa_brk-b_screener_web.py`를 유지하면서 Firebase 웹앱을 추가했습니다.
 기준 원본: `main` 커밋 `7f4b4cac1070eef23cbcfd1369cd83c632b3d05b`.
+2026-10-26 후속: `feat/pension-fractional`에서 원화 마법의 연금굴리기를 세 번째 탭으로 통합하고, 현근 HAA에 정수·소수점 목표수량 선택을 추가합니다. [연금 통합·수량 계산·시세·배포 안내](docs/PENSION_INTEGRATION.md).
 작업 브랜치: `feat/firebase-haa-webapp`. 자동 배포·자동 머지는 없습니다.
 차트·모바일 후속 개선 브랜치: `feat/haa-interactive-charts`.
 수진 통합 브랜치: `feat/couple-rebalancer` — **2026-08-30 사용자 승인 후 운영 배포 완료, main 미병합**입니다.
@@ -80,6 +81,7 @@ haa_brk-b_screener_web.py   기존 Streamlit 앱 (보존)
 frontend/                 한국어 React UI, 수량 계산, UI 테스트
 functions/main.py         공유 예약 함수 2개, 인증된 백테스트·수동 갱신 API
 functions/sujin/          수진 고정비중 백테스트·공통 시세 재사용·독립 캐시
+functions/pension/        한국 KRX 달력·원화 ETF 9종목 수동 시세·성공 캐시
 functions/haa/core.py      13612U, 선택, 실전/백테스트 분리
 functions/haa/calendar.py  NYSE 휴장·조기폐장·서머타임 경계
 functions/haa/market.py    yfinance 조회, 데이터 검증, 재시도
@@ -123,7 +125,7 @@ source functions/venv/bin/activate
 pip install -r requirements-dev.txt
 npm ci
 pytest -q
-ruff check functions/haa functions/sujin functions/main.py tests/test_firebase*.py
+ruff check functions/haa functions/sujin functions/pension functions/main.py tests/test_firebase*.py
 npm test
 npm run build
 npm run test:rules
@@ -224,7 +226,7 @@ npx firebase deploy --only firestore:rules,firestore:indexes,functions,hosting -
 - 서비스 계정은 Admin SDK로 규칙을 우회합니다. 서버 런타임 계정의 IAM 권한도 검토하고 클라이언트에 노출하지 마세요.
 - API는 캐시만 읽습니다. 인증된 사용자가 페이지를 새로고침한다고 Yahoo 갱신이 실행되지는 않습니다.
 - 당일 데이터 실패 시 직전 성공값을 유지합니다. 성공값의 나이가 오래되면 거래 판단을 중지하고 데이터부터 확인하세요. 화면은 30분 이상 된 실행 시세로 계산안을 저장할 때 확인 체크를 요구합니다(장외도 포함).
-- 지연 시세, 체결가격 차이, 수수료, 세금, 환율은 계산에 포함되지 않습니다. 현금은 USD 기준이며 자동 주문·증권사 연동은 없습니다. 목표 수량은 정수, 기존 소수 보유량의 매도는 소수 단위가 될 수 있습니다.
+- 지연 시세, 체결가격 차이, 수수료, 세금, 환율은 계산에 포함되지 않습니다. 현근·수진은 USD, 연금은 KRW로 분리합니다. 현근 HAA는 정수/소수점 6자리 내림을 선택하고 기존 설정 미지정은 정수입니다. 수진은 기존 선택 단위를 유지하고 연금 국내 ETF는 정수 수량입니다. 자동 주문·증권사 연동은 없습니다.
 - 백테스트는 월말 종가 즉시 리밸런싱을 가정한 이론값입니다. 실제 신호 확인 후 다음 거래일 체결 시 성과가 다를 수 있습니다. 일중 낙폭은 계산하지 않습니다.
 - 전 기간 DBC를 사용하는 백테스트와 PDBC를 사용하는 실전 신호가 다를 수 있습니다. 과거 백테스트 시계열은 Yahoo의 배당·분할 수정으로 이후 바뀔 수 있고, 별도 저장한 월별 확정본은 그대로 보존합니다.
 - 60초 이상 걸리는 백테스트는 Hosting 시간 제한에 걸릴 수 있습니다. 소수 사용자·현재 월별 데이터 규모를 대상으로 했습니다. 규모 확대 시 비동기 작업·결과 캐시를 검토하세요.

@@ -5,10 +5,11 @@ import { apiHeaders, auth, configured, db, demo, login, logout } from './firebas
 import { demoConfirmed, demoMarket, demoPreview } from './demo';
 import { Curve } from './Curve';
 import { SujinPortfolio } from './SujinPortfolio';
+import { PensionPortfolio } from './PensionPortfolio';
 import { useFamilyAccess } from './familyAccess';
 import { FamilyAccessPanel } from './FamilyAccessPanel';
 import { marketSession } from './marketSession';
-import { buildPlan, defaultProfile, money, percent, timeLabel, validateProfile } from './portfolio';
+import { buildPlan, defaultProfile, money, percent, quantityLabel, timeLabel, validateProfile } from './portfolio';
 import { TICKERS, type Backtest, type Market, type Profile, type Rebalance, type Signal, type UpdateStatus } from './types';
 
 const explainError = (e: unknown) => e instanceof Error ? e.message : '요청 처리에 실패했습니다.';
@@ -65,6 +66,7 @@ export default function App() {
   const [tab, setTab] = useState('overview');
   const [portfolioOwner, setPortfolioOwner] = useState('hyungeun');
   const [sujinVisited, setSujinVisited] = useState(false);
+  const [pensionVisited, setPensionVisited] = useState(false);
   const [profile, setProfile] = useState<Profile>(defaultProfile);
   const [confirmed, setConfirmed] = useState<Signal | null>(demo ? demoConfirmed : null);
   const [preview, setPreview] = useState<Signal | null>(demo ? demoPreview : null);
@@ -88,7 +90,7 @@ export default function App() {
   useEffect(() => {
     if (demo || !db) return;
     setProfile(defaultProfile()); dirty.current = false; setProfileReady(false);setShowFamily(false);
-    setPortfolioOwner('hyungeun'); setSujinVisited(false);
+    setPortfolioOwner('hyungeun'); setSujinVisited(false); setPensionVisited(false);
     setConfirmed(null); setPreview(null); setMarket(null); setHistory([]); setRebalances([]); setStatuses({}); setResult(null);
     requestGeneration.current++; setLoading(false); setError(''); setMessage('');
   }, [user]);
@@ -117,7 +119,7 @@ export default function App() {
   async function saveProfile() {
     if (!db || !user || demo || !approved || !dataOwnerUid || !profileReady) return;
     setSaving(true); setError('');
-    try { validateProfile(profile); await setDoc(doc(db,'users',dataOwnerUid), {...profile,updatedAt:serverTimestamp()}); dirty.current = false; setMessage('보유수량과 설정을 저장했습니다.'); }
+    try { validateProfile(profile); await setDoc(doc(db,'users',dataOwnerUid), {...profile,quantityMode:profile.quantityMode??'whole',updatedAt:serverTimestamp()}); dirty.current = false; setMessage('보유수량과 설정을 저장했습니다.'); }
     catch(e) { setError(explainError(e)); } finally { setSaving(false); }
   }
   async function recordPlan() {
@@ -125,7 +127,7 @@ export default function App() {
     setSaving(true); setError('');
     try {
       await addDoc(collection(db,'users',dataOwnerUid,'rebalances'), { createdAt:serverTimestamp(),signalMonth:confirmed.month,
-        sp500:profile.sp500,equity:plan.equity,lines:plan.lines,kind:'계산안' });
+        sp500:profile.sp500,quantityMode:profile.quantityMode??'whole',equity:plan.equity,lines:plan.lines,kind:'계산안' });
       setMessage('계산안을 이력에 저장했습니다. 실제 주문·보유수량 변경은 수행하지 않았습니다.');
     } catch(e) { setError(explainError(e)); } finally { setSaving(false); }
   }
@@ -158,12 +160,13 @@ export default function App() {
       {error && <div className="error" role="alert">{error}<button className="quiet" onClick={() => setError('')}>닫기</button></div>}
       {message && portfolioOwner==='hyungeun' && <div className="success" role="status">{message}</div>}
       {approved && <>
-        {!demo&&<div className="family-toolbar"><span>가족 공유 공간 · {family.access?.role==='admin'?'관리자':'구성원'} · 같은 현근·수진 포트폴리오를 사용합니다.</span>{family.access?.role==='admin'&&<button onClick={()=>setShowFamily(v=>!v)}>{showFamily?'포트폴리오로 돌아가기':'가족·권한 관리'}</button>}</div>}
+        {!demo&&<div className="family-toolbar"><span>가족 공유 공간 · {family.access?.role==='admin'?'관리자':'구성원'} · 현근·수진·연금 포트폴리오를 함께 사용합니다.</span>{family.access?.role==='admin'&&<button onClick={()=>setShowFamily(v=>!v)}>{showFamily?'포트폴리오로 돌아가기':'가족·권한 관리'}</button>}</div>}
         {showFamily&&family.access?.role==='admin'&&<FamilyAccessPanel/>}
         <div hidden={showFamily}>
         <div className="portfolio-switch" role="group" aria-label="포트폴리오 선택">
           <button aria-pressed={portfolioOwner==='hyungeun'} onClick={()=>setPortfolioOwner('hyungeun')}>남편 · 현근<span>HAA 80% + BRK-B 20%</span></button>
           <button aria-pressed={portfolioOwner==='sujin'} onClick={()=>{setSujinVisited(true);setPortfolioOwner('sujin');}}>아내 · 수진<span>고정비중 월말 리밸런싱</span></button>
+          <button aria-pressed={portfolioOwner==='pension'} onClick={()=>{setPensionVisited(true);setPortfolioOwner('pension');}}>연금 포트폴리오<span>마법의 연금굴리기 · KRW</span></button>
         </div>
         <div hidden={portfolioOwner!=='hyungeun'}>
         {failed && <div className="notice">갱신 실패: 마지막 성공 신호를 유지하고 있습니다. {Object.entries(statuses).filter(([,s])=>!s.ok).map(([j,s])=> `${j === 'daily' ? '일일' : '장중'} 시도 ${timeLabel(s.lastAttemptAt)}`).join(' / ')}</div>}
@@ -181,6 +184,8 @@ export default function App() {
               <fieldset className="family-fields" disabled={!profileReady||saving}>
               <label>실전 S&P500 ETF<select value={profile.sp500} onChange={e=>edit({sp500:e.target.value as Profile['sp500']})}><option>SPY</option><option>SPYM</option></select></label>
               <p className="micro">선택 ETF는 실행 수량에만 반영합니다. 모멘텀과 백테스트는 항상 SPY입니다.</p>
+              <label>HAA 수량 단위<select value={profile.quantityMode??'whole'} onChange={e=>edit({quantityMode:e.target.value as Profile['quantityMode']})}><option value="whole">정수 · 1주 단위</option><option value="fractional">소수점 · 0.000001주 단위</option></select></label>
+              <p className="micro">목표수량을 선택 단위로 내림합니다. 실제 주문 가능한 소수점 단위는 증권사에서 확인하세요.</p>
               <label>현금 잔액 (USD)<input type="number" min="0" max="1000000000000" step="0.01" value={Number.isNaN(profile.cash)?'':profile.cash} onChange={e=>edit({cash:e.target.valueAsNumber})}/></label>
               <div className="holdings-grid">{TICKERS.map(t=><label key={t}>{t}<input aria-label={`${t} 보유수량`} type="number" min="0" max="1000000000" step="any" value={Number.isNaN(profile.holdings[t])?'':profile.holdings[t]} onChange={e=>edit({holdings:{...profile.holdings,[t]:e.target.valueAsNumber}})}/></label>)}</div>
               </fieldset>
@@ -190,10 +195,10 @@ export default function App() {
             <section className="panel rebalance"><div className="section-title"><h2>리밸런싱 계산안</h2><span>{confirmed?.month ?? '—'} 확정 신호 기준</span></div>
               {planError && <p className="error">{planError}</p>}
               {plan ? <>
-                <div className="balance"><span>현재 평가금액</span><strong>{money(plan.equity)}</strong><small>정수 수량 매수 후 예상 현금 {money(plan.remainingCash)}</small></div>
+                <div className="balance"><span>현재 평가금액</span><strong>{money(plan.equity)}</strong><small>{profile.quantityMode==='fractional'?'소수점':'정수'} 목표수량 적용 후 예상 현금 {money(plan.remainingCash)}</small></div>
                 {(stale || failed) && <p className="notice">장외·지연 시세 또는 직전 성공값입니다. 거래 전 증권사 가격을 확인하세요.</p>}
                 <div className="table-scroll"><table><thead><tr><th>실전 종목</th><th>비중</th><th>보유 → 목표</th><th>매매 수량</th><th>평가 가격</th></tr></thead><tbody>
-                  {plan.lines.map(l=><tr key={l.ticker}><th>{l.ticker}</th><td>{(l.weight*100).toFixed(0)}%</td><td>{l.held} → {l.target}</td><td className={l.trade<0?'negative':'positive'}>{l.trade>0?'+':''}{l.trade}</td><td title={timeLabel(market?.priceTimes[l.ticker])}>{money(l.price)}</td></tr>)}
+                  {plan.lines.map(l=><tr key={l.ticker}><th>{l.ticker}</th><td>{(l.weight*100).toFixed(0)}%</td><td>{quantityLabel(l.held)} → {quantityLabel(l.target)}</td><td className={l.trade<0?'negative':'positive'}>{l.trade>0?'+':''}{quantityLabel(l.trade)}</td><td title={timeLabel(market?.priceTimes[l.ticker])}>{money(l.price)}</td></tr>)}
                 </tbody></table></div>
                 <p className="micro">매도 후 매수하는 계산입니다. 수수료·세금·환전·호가 차이는 제외하며, 보유자산은 자동 변경하지 않습니다. 가격 셀에 마우스를 올리면 시세 시각을 확인할 수 있습니다.</p>
                 {(stale || failed) && <label className="check"><input type="checkbox" checked={acknowledged} onChange={e=>setAcknowledged(e.target.checked)}/>지연 또는 직전 성공 시세인 점을 확인했습니다.</label>}
@@ -210,9 +215,10 @@ export default function App() {
           <p className="micro">월말 신호는 다음 달 수익에 적용합니다. 수정주가의 배당·분할을 반영하며 수수료·슬리피지·세금은 제외합니다. 낙폭은 월말 관측 기준입니다. 샤프는 기존 방식인 (CAGR − 선택 기간 ^IRX 평균) / 연환산 변동성입니다. 과거 성과는 미래 수익을 보장하지 않습니다.</p>
         </section>}
         {tab === 'history' && <div className="history-grid"><section className="panel"><h2>월말 확정 신호</h2><p className="micro">운영 시작 이후 저장한 확정본 · 최근 24건 · 신호 기준 티커 표시</p>{history.length?<div className="table-scroll"><table><thead><tr><th>신호 월</th><th>상태</th><th>목표 자산</th></tr></thead><tbody>{history.map(h=><tr key={h.month}><td>{h.month}</td><td>{h.regime}</td><td>{weightsLabel(h.weights)}</td></tr>)}</tbody></table></div>:<p className="empty">저장된 확정 이력이 없습니다.</p>}</section>
-          <section className="panel"><h2>나의 리밸런싱 계산안</h2><p className="micro">최근 24건. 저장은 주문 체결을 의미하지 않습니다.</p>{rebalances.length?rebalances.map(r=><details key={r.id}><summary>{r.signalMonth} · {r.sp500} · {money(r.equity)} · {r.kind}</summary><div className="table-scroll"><table><thead><tr><th>종목</th><th>목표</th><th>매매</th><th>사용 가격</th></tr></thead><tbody>{r.lines.map(l=><tr key={l.ticker}><td>{l.ticker}</td><td>{l.target}</td><td>{l.trade}</td><td>{money(l.price)}</td></tr>)}</tbody></table></div></details>):<p className="empty">아직 저장한 계산안이 없습니다.</p>}</section></div>}
+          <section className="panel"><h2>나의 리밸런싱 계산안</h2><p className="micro">최근 24건. 저장은 주문 체결을 의미하지 않습니다.</p>{rebalances.length?rebalances.map(r=><details key={r.id}><summary>{r.signalMonth} · {r.sp500} · {r.quantityMode==='fractional'?'소수점':'정수'} · {money(r.equity)} · {r.kind}</summary><div className="table-scroll"><table><thead><tr><th>종목</th><th>목표</th><th>매매</th><th>사용 가격</th></tr></thead><tbody>{r.lines.map(l=><tr key={l.ticker}><td>{l.ticker}</td><td>{quantityLabel(l.target)}</td><td>{quantityLabel(l.trade)}</td><td>{money(l.price)}</td></tr>)}</tbody></table></div></details>):<p className="empty">아직 저장한 계산안이 없습니다.</p>}</section></div>}
         </div>
         {sujinVisited&&<div hidden={portfolioOwner!=='sujin'}><SujinPortfolio key={`${user?.uid}:${dataOwnerUid}`} user={user} ownerUid={dataOwnerUid} now={now} renderBacktest={data=><BacktestView result={data}/>}/></div>}
+        {pensionVisited&&<div hidden={portfolioOwner!=='pension'}><PensionPortfolio key={`${user?.uid}:${dataOwnerUid}`} user={user} ownerUid={dataOwnerUid} now={now}/></div>}
         </div>
       </>}
       <footer><span>부부 리밸런서</span><p>개인용 투자 보조 도구 · Yahoo Finance 시세는 지연되거나 수정될 수 있습니다.<br />예상 신호는 확정 신호가 아니며, 자동 주문을 실행하지 않습니다.</p></footer>
