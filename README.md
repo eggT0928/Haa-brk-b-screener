@@ -2,7 +2,7 @@
 
 기존 Streamlit `haa_brk-b_screener_web.py`를 유지하면서 Firebase 웹앱을 추가했습니다.
 기준 원본: `main` 커밋 `7f4b4cac1070eef23cbcfd1369cd83c632b3d05b`.
-2026-10-26 후속: `feat/pension-fractional`에서 원화 마법의 연금굴리기를 세 번째 탭으로 통합하고, 현근 HAA에 정수·소수점 목표수량 선택을 추가합니다. [연금 통합·수량 계산·시세·배포 안내](docs/PENSION_INTEGRATION.md).
+2026-10-26 후속: `feat/pension-fractional`에서 원화 마법의 연금굴리기를 세 번째 탭으로 통합하고 현근 HAA에 정수·소수점 목표수량 선택을 추가해 **운영 배포 완료**했습니다. [연금 통합·수량 계산·시세·배포 안내](docs/PENSION_INTEGRATION.md). main 미병합입니다.
 작업 브랜치: `feat/firebase-haa-webapp`. 자동 배포·자동 머지는 없습니다.
 차트·모바일 후속 개선 브랜치: `feat/haa-interactive-charts`.
 수진 통합 브랜치: `feat/couple-rebalancer` — **2026-08-30 사용자 승인 후 운영 배포 완료, main 미병합**입니다.
