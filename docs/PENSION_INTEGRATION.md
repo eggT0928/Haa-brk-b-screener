@@ -1,5 +1,7 @@
 # 연금 포트폴리오 통합과 HAA 소수점 수량
 
+> 아래 내용은 2026-10-26의9종목 통합 기록입니다. 현재12종목 구성과 금 합산20% 규칙은 [정정 문서](PENSION_SOURCE_CORRECTION.md)를 따릅니다.
+
 작업 브랜치 `feat/pension-fractional`. 기존 운영 후속 `fix/market-closure`의 미국 휴장 안내·시세 시각 수정까지 포함한 상태에서 확장합니다. 사용자 요청의 기존 Firebase 프로젝트 `haa-portfolio-260830`을 사용하며 main 머지는 별도입니다.
 
 ## 원본과 유지한 계산

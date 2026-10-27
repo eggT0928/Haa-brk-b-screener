@@ -35,6 +35,7 @@ def yahoo_frame(index, price=10000):
 @pytest.fixture(autouse=True)
 def no_retry_delay(monkeypatch):
     monkeypatch.setattr(market, "retry", lambda operation, attempts=2: operation())
+    monkeypatch.setattr(PensionMarket, "_naver", lambda *a: (_ for _ in ()).throw(ValueError("offline test")))
 
 
 def test_krx_holiday_weekend_and_settlement_do_not_follow_us_calendar():
@@ -102,20 +103,20 @@ def test_timezone_missing_and_future_quotes_are_rejected():
             quote_payload(dict.fromkeys(TICKERS, 10000.0), dict.fromkeys(TICKERS, stamp), now, "intraday")
 
 
-def test_intraday_ten_minute_shared_cache_and_independent_documents():
+def test_intraday_one_minute_shared_cache_and_independent_documents():
     now = pd.Timestamp("2026-10-26T03:00:00Z")
     store, provider = ManualStore(), FakePension()
     store.docs["market/current"] = {"preserved": True}
     store.docs["market/sujin"] = {"preserved": "sujin"}
     first = refresh_quotes(store, provider, now)
     assert first["source"] == "refreshed"
-    assert refresh_quotes(store, provider, now + pd.Timedelta(minutes=9))["source"] == "cache"
+    assert refresh_quotes(store, provider, now + pd.Timedelta(seconds=59))["source"] == "cache"
     assert provider.calls == 1
-    assert refresh_quotes(store, provider, now + pd.Timedelta(minutes=10))["source"] == "refreshed"
+    assert refresh_quotes(store, provider, now + pd.Timedelta(seconds=60))["source"] == "refreshed"
     assert provider.calls == 2
     assert store.docs["market/current"] == {"preserved": True}
     assert store.docs["market/sujin"] == {"preserved": "sujin"}
-    assert set(store.gates) == {"pensionQuotes"}
+    assert set(store.gates) == {"pensionQuotesV2"}
 
 
 def test_weekend_close_cache_preserves_original_updated_at_without_yahoo():
@@ -131,11 +132,11 @@ def test_failure_preserves_all_success_values_and_timestamp_then_throttles():
     now = pd.Timestamp("2026-10-26T03:00:00Z")
     store, provider = ManualStore(), FakePension()
     first = refresh_quotes(store, provider, now)
-    before = deepcopy(store.docs["market/pension"])
+    before = deepcopy(store.docs["market/pensionV2"])
     provider.fail = True
     result = refresh_quotes(store, provider, now + pd.Timedelta(minutes=20))
     assert result["source"] == "fallback" and result["market"] == before == first["market"]
-    assert store.docs["status/pensionQuotes"]["ok"] is False
+    assert store.docs["status/pensionQuotesV2"]["ok"] is False
     assert refresh_quotes(store, provider, now + pd.Timedelta(minutes=20, seconds=30))["source"] == "fallback"
     assert provider.calls == 2
 
@@ -146,7 +147,7 @@ def test_first_failure_has_no_fake_price_and_is_throttled():
     provider.fail = True
     with pytest.raises(LookupError):
         refresh_quotes(store, provider, now)
-    assert "market/pension" not in store.docs
+    assert "market/pensionV2" not in store.docs
     with pytest.raises(RefreshBusy):
         refresh_quotes(store, provider, now + pd.Timedelta(seconds=30))
     assert provider.calls == 1
@@ -161,7 +162,7 @@ def test_cache_requires_krw_complete_prices_and_matching_session():
     assert not recent_quotes(value, now + pd.Timedelta(days=1))
 
 
-def test_provider_retries_are_bounded_to_two(monkeypatch):
+def test_provider_attempt_is_bounded_to_one_for_api_deadline(monkeypatch):
     attempts = []
     original_retry = __import__("haa.market", fromlist=["retry"]).retry
     monkeypatch.setattr(
@@ -175,4 +176,4 @@ def test_provider_retries_are_bounded_to_two(monkeypatch):
     monkeypatch.setattr(market.yf, "download", fail)
     with pytest.raises(ValueError):
         PensionMarket().quotes("2026-10-24T08:00:00Z")
-    assert len(attempts) == 2
+    assert len(attempts) == 1

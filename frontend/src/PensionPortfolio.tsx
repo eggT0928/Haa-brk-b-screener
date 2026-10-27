@@ -3,7 +3,7 @@ import type { User } from 'firebase/auth';
 import { addDoc, collection, doc, limit, onSnapshot, orderBy, query, serverTimestamp, setDoc } from 'firebase/firestore';
 import { apiHeaders, db, demo } from './firebase';
 import { percent, timeLabel } from './portfolio';
-import { buildPensionPlan, defaultPensionProfile, PENSION_ASSETS, PENSION_CODES, pensionCsv, validatePensionProfile, won, type PensionMarket, type PensionProfile, type PensionRecord } from './pensionModel';
+import { buildPensionPlan, defaultPensionProfile, effectivePensionWeights, GOLD_CODES, PENSION_PATH, PENSION_ASSETS, PENSION_CODES, pensionCsv, validatePensionProfile, won, type PensionMarket, type PensionProfile, type PensionRecord } from './pensionModel';
 import type { UpdateStatus } from './types';
 import './pension.css';
 
@@ -22,21 +22,22 @@ export function PensionPortfolio({user,ownerUid,now}:{user:User|null;ownerUid?:s
     if(demo||!db||!user||!ownerUid)return()=>{alive.current=false;activeRequest.current?.abort();};
     const fail=(e:unknown)=>{if(alive.current){setReady(false);setError(`연금 저장 데이터 연결 오류: ${explain(e)}`);}};
     const stops=[
-      onSnapshot(doc(db,'users',ownerUid,'portfolios','pension'),s=>{
+      onSnapshot(doc(db,'users',ownerUid,'portfolios',PENSION_PATH),s=>{
         if(!alive.current||dirty.current)return;
         const next=s.exists()?s.data() as PensionProfile:defaultPensionProfile();
         try{validatePensionProfile(next);setProfile(next);setReady(true);}catch(e){fail(e);}
       },fail),
-      onSnapshot(doc(db,'market','pension'),s=>{if(alive.current){setMarket(s.exists()?s.data() as PensionMarket:null);setAck(false);}},e=>{if(alive.current)setError(explain(e));}),
-      onSnapshot(doc(db,'status','pensionQuotes'),s=>{if(alive.current){setStatus(s.exists()?s.data() as UpdateStatus:null);setAck(false);}},e=>{if(alive.current)setError(explain(e));}),
-      onSnapshot(query(collection(db,'users',ownerUid,'portfolios','pension','rebalances'),orderBy('createdAt','desc'),limit(24)),s=>{if(alive.current)setRecords(s.docs.map(d=>({...d.data(),id:d.id} as PensionRecord)));},e=>{if(alive.current)setError(explain(e));}),
+      onSnapshot(doc(db,'market','pensionV2'),s=>{if(alive.current){setMarket(s.exists()?s.data() as PensionMarket:null);setAck(false);}},e=>{if(alive.current)setError(explain(e));}),
+      onSnapshot(doc(db,'status','pensionQuotesV2'),s=>{if(alive.current){setStatus(s.exists()?s.data() as UpdateStatus:null);setAck(false);}},e=>{if(alive.current)setError(explain(e));}),
+      onSnapshot(query(collection(db,'users',ownerUid,'portfolios',PENSION_PATH,'rebalances'),orderBy('createdAt','desc'),limit(24)),s=>{if(alive.current)setRecords(s.docs.map(d=>{const data=d.data();return {...data,id:d.id,lines:PENSION_CODES.map((_,i)=>({held:data.lines[i*3],price:data.lines[i*3+1],target:data.lines[i*3+2]}))} as PensionRecord;}));},e=>{if(alive.current)setError(explain(e));}),
     ];
     return()=>{alive.current=false;activeRequest.current?.abort();stops.forEach(stop=>stop());};
   },[user?.uid,ownerUid]);
   function edit(next:Partial<PensionProfile>){if(!ready||busy)return;dirty.current=true;setProfile(p=>({...p,...next}));setMessage('');}
   let plan:ReturnType<typeof buildPensionPlan>|null=null,planError='';
   if(ready&&market&&profile.totalBalance>0){try{plan=buildPensionPlan(profile,market);}catch(e){planError=explain(e);}}
-  const weightSum=Object.values(profile.weights).reduce((s,w)=>s+w,0);
+  const weights=effectivePensionWeights(profile,market);
+  const weightSum=Object.values(profile.weights).reduce((s,w)=>s+w,0)+profile.goldTargetWeight;
   const stale=!market||market.quoteMode!=='intraday'||status?.ok===false||PENSION_CODES.some(c=>{
     const time=Date.parse(market.priceTimes[c]);return!Number.isFinite(time)||now-time>30*60000||time-now>60000;
   });
@@ -54,7 +55,7 @@ export function PensionPortfolio({user,ownerUid,now}:{user:User|null;ownerUid?:s
   }
   async function save(){
     if(demo||!db||!user||!ownerUid||!ready||busy)return;setBusy('save');setError('');setMessage('');
-    try{validatePensionProfile(profile);await setDoc(doc(db,'users',ownerUid,'portfolios','pension'),{...profile,updatedAt:serverTimestamp()});
+    try{validatePensionProfile(profile);await setDoc(doc(db,'users',ownerUid,'portfolios',PENSION_PATH),{...profile,updatedAt:serverTimestamp()});
       if(alive.current){dirty.current=false;setMessage('연금 보유수량·총자산·원금·목표 비중을 저장했습니다.');}}
     catch(e){if(alive.current)setError(explain(e));}finally{if(alive.current)setBusy('');}
   }
@@ -63,17 +64,17 @@ export function PensionPortfolio({user,ownerUid,now}:{user:User|null;ownerUid?:s
     setBusy('record');setError('');setMessage('');
     try{
       const month=new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit'}).format(now);
-      await addDoc(collection(db,'users',ownerUid,'portfolios','pension','rebalances'),{createdAt:serverTimestamp(),month,strategy:profile.strategy,currency:'KRW',kind:'계산안',
-        equity:plan.equity,principal:profile.principal,remainingCash:plan.remainingCash,weights:profile.weights,
-        priceUpdatedAt:market.updatedAt,oldestPriceAt:plan.oldestPriceAt,lines:plan.lines.map(({held,price,target})=>({held,price,target}))});
+      await addDoc(collection(db,'users',ownerUid,'portfolios',PENSION_PATH,'rebalances'),{createdAt:serverTimestamp(),month,strategy:profile.strategy,currency:'KRW',kind:'계산안',
+        equity:plan.equity,principal:profile.principal,remainingCash:plan.remainingCash,weights:plan.weights,
+        priceUpdatedAt:market.updatedAt,oldestPriceAt:plan.oldestPriceAt,lines:plan.lines.flatMap(({held,price,target})=>[held,price,target])});
       if(alive.current)setMessage('연금 계산안을 이력에 저장했습니다.');
     }catch(e){if(alive.current)setError(explain(e));}finally{if(alive.current)setBusy('');}
   }
   function download(){if(!plan)return;const url=URL.createObjectURL(new Blob([pensionCsv(plan,profile)],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='마법의연금_리밸런싱_계산안.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
   return <div className="pension-workspace">
-    <div className="sujin-topline"><div><span className="eyebrow">연금 · 원화 국내 상장 ETF</span><h2>마법의 연금굴리기</h2><p>9개 ETF의 목표 비중과 보유수량을 한곳에서 관리하세요.</p></div>
+    <div className="sujin-topline"><div><span className="eyebrow">연금 · 원화 국내 상장 ETF</span><h2>연금저축 리밸런싱</h2><p>12개 ETF의 목표 비중과 보유수량을 한곳에서 관리하세요.</p></div>
       <button onClick={refresh} disabled={demo||!!busy}>{busy==='refresh'?'연금 시세 조회 중…':'연금 시세 갱신'}</button></div>
-    <p className="micro">최근 성공 조회 {timeLabel(market?.updatedAt)} · {market?.quoteMode==='intraday'?'Yahoo 장중 시세':market?'종가 기준':'시세 대기'}{market&&` · 가격 기준 거래일 ${market.marketDate}`}</p>
+    <p className="micro">최근 성공 조회 {timeLabel(market?.updatedAt)} · {market?.quoteMode==='intraday'?`${market.source??'온라인'} 장중 시세`:market?'종가 기준':'시세 대기'}{market&&` · 가격 기준 거래일 ${market.marketDate}`}</p>
     <p className="micro">연금 시세는 갱신 버튼을 누를 때 조회합니다. 최근 성공값은 함께 재사용합니다. {dirty.current?'저장하지 않은 연금 입력이 있습니다.':'연금 정보는 가족 공유 공간에 따로 저장됩니다.'}</p>
     {error&&<p className="error" role="alert">{error}</p>}{message&&<p className="success" role="status">{message}</p>}
     {status?.ok===false&&<p className="notice">연금 시세 조회에 실패해 직전 성공값과 원래 가격 시각을 유지합니다.</p>}
@@ -84,10 +85,12 @@ export function PensionPortfolio({user,ownerUid,now}:{user:User|null;ownerUid?:s
         <fieldset disabled={!ready||!!busy} className="sujin-fields">
           <div className="pension-totals"><label>연금 총자산 · 평가금액 + 예수금 (원)<input type="number" min="0" max="1000000000000" step="1" value={Number.isNaN(profile.totalBalance)?'':profile.totalBalance} onChange={e=>edit({totalBalance:e.target.valueAsNumber})}/></label>
             <label>연금 원금 · 누적 투자금 (원)<input type="number" min="0" max="1000000000000" step="1" value={Number.isNaN(profile.principal)?'':profile.principal} onChange={e=>edit({principal:e.target.valueAsNumber})}/></label></div>
-          <div className="section-title"><p>목표 비중 합계 <strong className={Math.abs(weightSum-1)>1e-8?'negative':''}>{percent(weightSum)}</strong></p><div className="pension-actions"><button onClick={()=>edit({weights:defaultPensionProfile().weights})}>기본 비중 복원</button><button onClick={()=>edit({targetOverrides:defaultPensionProfile().targetOverrides})}>목표수량 자동 계산으로</button></div></div>
+          <div className="section-title"><p>목표 비중 합계 <strong className={Math.abs(weightSum-1)>1e-8?'negative':''}>{percent(weightSum)}</strong></p><div className="pension-actions"><button onClick={()=>edit({weights:defaultPensionProfile().weights,goldTargetWeight:.20})}>기본 비중 복원</button><button onClick={()=>edit({targetOverrides:defaultPensionProfile().targetOverrides})}>목표수량 자동 계산으로</button></div></div>
+          <label>금 ETF 합산 목표 비중 (%)<input aria-label="금 ETF 합산 목표 비중 (%)" type="number" min="0" max="100" step="0.1" value={Number.isNaN(profile.goldTargetWeight)?'':profile.goldTargetWeight*100} onChange={e=>edit({goldTargetWeight:e.target.valueAsNumber/100})}/></label>
+          <p className="micro">TIGER·ACE 금 ETF 합계 목표는 {percent(profile.goldTargetWeight)}입니다. 두 ETF의 현재 평가금액 비율로 자동 배분합니다. 금 보유량이 모두 0이면 기존 시트의 초기 배분 비율을 사용합니다. 정수 주수로 매매하므로 실제 체결 후 비중에는 소액 차이가 생길 수 있습니다.</p>
           <div className="pension-rows">{PENSION_ASSETS.map(a=>{const line=plan?.lines.find(l=>l.ticker===a.code);return <div className="pension-row" key={a.code}>
             <div className="pension-asset"><strong>{a.name}</strong><span>{a.group} · KRX:{a.code}</span><small>가격 {market&&market.prices[a.code]>0?won(market.prices[a.code]):'—'}</small></div>
-            <label>목표 비중 (%)<input aria-label={`연금 ${a.code} 목표 비중 (%)`} type="number" min="0" max="100" step="0.1" value={Number.isNaN(profile.weights[a.code])?'':Number((profile.weights[a.code]*100).toFixed(8))} onChange={e=>edit({weights:{...profile.weights,[a.code]:e.target.valueAsNumber/100}})}/></label>
+            <label>{GOLD_CODES.includes(a.code)?'금 합산 목표 내 자동 비중 (%)':'목표 비중 (%)'}<input disabled={GOLD_CODES.includes(a.code)} aria-label={`연금 ${a.code} 목표 비중 (%)`} type="number" min="0" max="100" step="0.1" value={Number.isNaN(weights[a.code])?'':Number((weights[a.code]*100).toFixed(8))} onChange={e=>edit({weights:{...profile.weights,[a.code]:e.target.valueAsNumber/100}})}/></label>
             <label>보유수량<input aria-label={`연금 ${a.code} 보유수량`} type="number" min="0" max="1000000000" step="1" value={Number.isNaN(profile.holdings[a.code])?'':profile.holdings[a.code]} onChange={e=>edit({holdings:{...profile.holdings,[a.code]:e.target.valueAsNumber}})}/></label>
             <label>목표 보유수량 · 빈칸은 자동<input aria-label={`연금 ${a.code} 목표 보유수량`} type="number" min="0" max="1000000000" step="1" placeholder={line?String(Math.floor(line.calculated)):'자동'} value={profile.targetOverrides[a.code]??''} onChange={e=>edit({targetOverrides:{...profile.targetOverrides,[a.code]:e.target.value===''?null:e.target.valueAsNumber}})}/></label>
           </div>;})}</div>
@@ -96,7 +99,7 @@ export function PensionPortfolio({user,ownerUid,now}:{user:User|null;ownerUid?:s
         <button className="primary" onClick={save} disabled={demo||!ready||!!busy}>연금 보유수량·설정 저장</button>
       </section>
       <section className="panel pension-plan"><div className="section-title"><h2>연금 리밸런싱 계산안</h2><span>현재 입력 기준</span></div>
-        {!market&&<p className="empty">‘연금 시세 갱신’을 눌러 가격을 불러오세요. 기존 Streamlit 입력은 자동으로 이전되지 않으므로 처음 한 번 입력·저장해 주세요.</p>}
+        {!market&&<p className="empty">‘연금 시세 갱신’을 눌러 가격을 불러오세요. 기존 Streamlit 입력은 자동으로 이전되지 않으므로 처음 한 번 입력·저장해 주세요. 이전 9종목 구성의 입력과 이력은 별도로 보존됩니다.</p>}
         {market&&profile.totalBalance<=0&&<p className="empty">총자산을 입력하면 목표 수량을 계산합니다.</p>}{planError&&<p className="error" role="alert">{planError}</p>}
         {plan&&<>
           <div className="metric-grid">{[['입력 총자산',won(plan.equity)],['보유 ETF 평가액',won(plan.holdingsValue)],['리밸런싱 후 예상 예수금',won(plan.remainingCash)],['입력 총자산 기준 손익',plan.profit===null?'—':won(plan.profit)],['원금 대비 수익률',percent(plan.profitRate)]].map(([label,value])=><div key={label}><span>{label}</span><strong>{value}</strong></div>)}</div>

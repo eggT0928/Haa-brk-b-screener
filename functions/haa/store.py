@@ -84,7 +84,7 @@ class FirestoreStore:
 
     def acquire_manual(self, key, now):
         # HAA 예약 잠금과 다른 문서. 실패한 조회도 60초 동안 연속 재실행을 막는다.
-        if key not in {"sujinQuotes", "sujinHistory", "pensionQuotes"}:
+        if key not in {"sujinQuotes", "sujinHistory", "pensionQuotes", "pensionQuotesV2"}:
             raise ValueError("허용하지 않은 수동 갱신 작업입니다.")
         ref = self.db.document(f"internal/{key}Lease")
         token = str(uuid.uuid4())

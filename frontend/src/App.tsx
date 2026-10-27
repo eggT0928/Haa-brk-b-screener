@@ -166,7 +166,7 @@ export default function App() {
         <div className="portfolio-switch" role="group" aria-label="포트폴리오 선택">
           <button aria-pressed={portfolioOwner==='hyungeun'} onClick={()=>setPortfolioOwner('hyungeun')}>남편 · 현근<span>HAA 80% + BRK-B 20%</span></button>
           <button aria-pressed={portfolioOwner==='sujin'} onClick={()=>{setSujinVisited(true);setPortfolioOwner('sujin');}}>아내 · 수진<span>고정비중 월말 리밸런싱</span></button>
-          <button aria-pressed={portfolioOwner==='pension'} onClick={()=>{setPensionVisited(true);setPortfolioOwner('pension');}}>연금 포트폴리오<span>마법의 연금굴리기 · KRW</span></button>
+          <button aria-pressed={portfolioOwner==='pension'} onClick={()=>{setPensionVisited(true);setPortfolioOwner('pension');}}>연금 포트폴리오<span>연금저축 리밸런싱 · 12종목 · KRW</span></button>
         </div>
         <div hidden={portfolioOwner!=='hyungeun'}>
         {failed && <div className="notice">갱신 실패: 마지막 성공 신호를 유지하고 있습니다. {Object.entries(statuses).filter(([,s])=>!s.ok).map(([j,s])=> `${j === 'daily' ? '일일' : '장중'} 시도 ${timeLabel(s.lastAttemptAt)}`).join(' / ')}</div>}
@@ -221,7 +221,7 @@ export default function App() {
         {pensionVisited&&<div hidden={portfolioOwner!=='pension'}><PensionPortfolio key={`${user?.uid}:${dataOwnerUid}`} user={user} ownerUid={dataOwnerUid} now={now}/></div>}
         </div>
       </>}
-      <footer><span>부부 리밸런서</span><p>개인용 투자 보조 도구 · Yahoo Finance 시세는 지연되거나 수정될 수 있습니다.<br />예상 신호는 확정 신호가 아니며, 자동 주문을 실행하지 않습니다.</p></footer>
+      <footer><span>부부 리밸런서</span><p>개인용 투자 보조 도구 · Yahoo Finance·네이버 시세는 지연되거나 수정될 수 있습니다.<br />예상 신호는 확정 신호가 아니며, 자동 주문을 실행하지 않습니다.</p></footer>
     </main>
   </>;
 }

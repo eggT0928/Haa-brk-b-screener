@@ -1,16 +1,18 @@
-"""KRX 거래 달력과 실제 시세 시각을 검증한 Yahoo 국내 ETF 원시 가격."""
+"""KRX 거래 달력과 실제 시세 시각을 검증한 Naver 우선·Yahoo 보조 국내 ETF 가격."""
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 
 import numpy as np
 import pandas as pd
 import pandas_market_calendars as mcal
+import requests
 import yfinance as yf
 from haa.calendar import utc
 from haa.market import field, retry, validate_row
 
-TICKERS = ["379800", "294400", "283580", "453810", "411060", "385560", "308620", "453850", "449170"]
+TICKERS = ['379800', '379810', '294400', '283580', '453810', '0072R0', '411060', '148070', '385560', '0085P0', '476760', '469830']
 SYMBOLS = [ticker + ".KS" for ticker in TICKERS]
 KST = "Asia/Seoul"
 logger = logging.getLogger(__name__)
@@ -88,8 +90,46 @@ def quote_payload(prices, timestamps, now, mode):
 
 
 class PensionMarket:
+    def _naver(self, now):
+        opened = is_open(now)
+        day, close_stamp = last_close(now)
+
+        def fetch(ticker):
+            # Naver's mobile endpoint supports the newer alphanumeric KRX codes.
+            suffix = "basic" if opened else "price"
+            response = requests.get(
+                f"https://m.stock.naver.com/api/stock/{ticker}/{suffix}",
+                headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"},
+                timeout=3,
+            )
+            response.raise_for_status()
+            data = response.json()
+            if opened:
+                if data.get("itemCode") != ticker or data.get("marketStatus") != "OPEN":
+                    raise ValueError(f"{ticker} 정규장 체결 시세가 아닙니다.")
+                stamp = utc(data["localTradedAt"])
+                raw = data["closePrice"]
+            else:
+                # A pre-open row can be stamped today with yesterday's price.
+                # Select the completed trading DATE, never the first available row.
+                row = next((r for r in data if r.get("localTradedAt") == str(day.date())), None)
+                if row is None:
+                    raise ValueError(f"{ticker} 최근 완료 거래일의 Naver 종가가 없습니다.")
+                raw, stamp = row["closePrice"], close_stamp
+            price = float(str(raw).replace(",", ""))
+            return ticker, price, stamp.isoformat()
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            rows = list(pool.map(fetch, TICKERS))
+        result = quote_payload(
+            {t: p for t, p, _ in rows}, {t: s for t, _, s in rows}, now,
+            "intraday" if opened else "close",
+        )
+        result["source"] = "Naver Finance"
+        return result
+
     def _download(self, opened):
-        # 9종목을 한 번에 조회한다. 실패 재시도 2회와 각 요청 제한을 두어 수동 연속 호출 비용을 줄인다.
+        # 12종목을 한 번에 조회한다. 공급자별 1회와 각 요청 제한을 두어 수동 연속 호출 비용을 줄인다.
         return yf.download(
             SYMBOLS,
             period="1d" if opened else "3mo",
@@ -97,8 +137,8 @@ class PensionMarket:
             prepost=False,
             auto_adjust=False,
             progress=False,
-            threads=9,
-            timeout=5,
+            threads=4,
+            timeout=3,
         )
 
     def _intraday(self, now):
@@ -127,9 +167,13 @@ class PensionMarket:
 
     def quotes(self, now):
         now = utc(now)
+        try:
+            return self._naver(now)
+        except Exception:
+            logger.warning("Naver 연금 시세 응답 불가. Yahoo 보조 조회를 시도합니다.")
         if is_open(now):
             try:
-                return retry(lambda: self._intraday(now), attempts=2)
+                return retry(lambda: self._intraday(now), attempts=1)
             except Exception:
                 logger.warning("연금 Yahoo 장중 응답 불가. 최근 완료된 KRX 종가만 별도 표시합니다.")
-        return retry(lambda: self._closing(now), attempts=2)
+        return retry(lambda: self._closing(now), attempts=1)

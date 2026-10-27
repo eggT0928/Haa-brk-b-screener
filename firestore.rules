@@ -1,4 +1,6 @@
 rules_version = '2';
+// pension-v2: 별도 12종목 프로필. 금 개별 weights는 0, goldTargetWeight와 나머지 합은 100%.
+// v2 이력은 실행 시 유효 비중 합100%와 고정순서 [held,price,target] × 12인 36개 숫자. v1 이력 순서는 유지.
 // 데이터 모델: access/{caller}는 서버 발급 enabled/ownerUid/role이며 본인 읽기만 가능하다.
 // users/{ownerUid}: HAA holdings12/cash/sp500/기간/updatedAt + 선택 quantityMode(구문서 정수).
 // portfolios/sujin: 수진 고정비중 설정. portfolios/pension: magic-pension-v1/KRW,
@@ -122,6 +124,54 @@ service cloud.firestore {
         && pensionLine(lines[3]) && pensionLine(lines[4]) && pensionLine(lines[5])
         && pensionLine(lines[6]) && pensionLine(lines[7]) && pensionLine(lines[8]);
     }
+    function pensionMapV2(m) {
+      // All twelve required keys are dereferenced by each caller; size forbids extras.
+      return m is map && m.size()==12;
+    }
+    function pensionHoldingsV2(h) {
+      return pensionMapV2(h) && whole(h['379800']) && whole(h['379810']) && whole(h['294400']) && whole(h['283580']) && whole(h['453810']) && whole(h['0072R0']) && whole(h['411060']) && whole(h['148070']) && whole(h['385560']) && whole(h['0085P0']) && whole(h['476760']) && whole(h['469830']);
+    }
+    function pensionOverridesV2(h) {
+      return pensionMapV2(h) && nullableWhole(h['379800']) && nullableWhole(h['379810']) && nullableWhole(h['294400']) && nullableWhole(h['283580']) && nullableWhole(h['453810']) && nullableWhole(h['0072R0']) && nullableWhole(h['411060']) && nullableWhole(h['148070']) && nullableWhole(h['385560']) && nullableWhole(h['0085P0']) && nullableWhole(h['476760']) && nullableWhole(h['469830']);
+    }
+    function lastWeights(w) {
+      let a=w['0085P0']; let b=w['476760']; let c=w['469830'];
+      return a>=0 && b>=0 && c>=0 ? a+b+c : -100;
+    }
+    function pensionWeightsV2(w, extra) {
+      let a=w['379800'];
+      let b=w['379810'];
+      let c=w['294400'];
+      let d=w['283580'];
+      let e=w['453810'];
+      let f=w['0072R0'];
+      let g=w['411060'];
+      let h=w['148070'];
+      let i=w['385560'];
+      let j=lastWeights(w);
+      return pensionMapV2(w) && a>=0 && b>=0 && c>=0 && d>=0 && e>=0 && f>=0 && g>=0 && h>=0 && i>=0 && j>=0 && math.abs(a+b+c+d+e+f+g+h+i+j+extra-1)<0.00000001;
+    }
+    function validPensionProfileV2(d) {
+      return d.keys().hasOnly(['strategy','currency','totalBalance','principal','holdings','weights','targetOverrides','goldTargetWeight','updatedAt'])
+        && d.strategy == 'magic-pension-v2' && d.currency == 'KRW'
+        && amount(d.totalBalance) && amount(d.principal)
+        && pensionHoldingsV2(d.holdings) && d.goldTargetWeight>=0 && d.goldTargetWeight<=1 && d.weights['0072R0']==0 && d.weights['411060']==0 && pensionWeightsV2(d.weights,d.goldTargetWeight) && pensionOverridesV2(d.targetOverrides)
+        && d.updatedAt == request.time;
+    }
+    function pensionTriple(held,price,target) {
+      return held is int && target is int && held>=0 && held<=1000000000
+        && target>=0 && target<=1000000000 && price>0 && price<=1000000000000;
+    }
+    function validPensionRecordV2(d) {
+      let lines=d.lines;
+      return d.size()==12
+        && d.createdAt==request.time && d.month.matches('^[0-9]{4}-[0-9]{2}$')
+        && d.strategy=='magic-pension-v2' && d.currency=='KRW' && d.kind=='계산안'
+        && amount(d.equity) && d.equity>0 && amount(d.principal) && amount(d.remainingCash) && d.remainingCash<=d.equity
+        && pensionWeightsV2(d.weights,0) && priceTime(d.priceUpdatedAt) && priceTime(d.oldestPriceAt)
+        && lines is list && lines.size()==36
+        && pensionTriple(lines[0],lines[1],lines[2]) && pensionTriple(lines[3],lines[4],lines[5]) && pensionTriple(lines[6],lines[7],lines[8]) && pensionTriple(lines[9],lines[10],lines[11]) && pensionTriple(lines[12],lines[13],lines[14]) && pensionTriple(lines[15],lines[16],lines[17]) && pensionTriple(lines[18],lines[19],lines[20]) && pensionTriple(lines[21],lines[22],lines[23]) && pensionTriple(lines[24],lines[25],lines[26]) && pensionTriple(lines[27],lines[28],lines[29]) && pensionTriple(lines[30],lines[31],lines[32]) && pensionTriple(lines[33],lines[34],lines[35]);
+    }
     match /access/{uid} {
       allow get: if signedIn() && request.auth.uid == uid;
       allow list, write: if false;
@@ -169,6 +219,16 @@ service cloud.firestore {
         match /rebalances/{id} {
           allow read: if owner(uid);
           allow create: if owner(uid) && validPensionRecord(request.resource.data);
+          allow update, delete: if false;
+        }
+      }
+      match /portfolios/pension-v2 {
+        allow read: if owner(uid);
+        allow create, update: if owner(uid) && validPensionProfileV2(request.resource.data);
+        allow delete: if false;
+        match /rebalances/{id} {
+          allow read: if owner(uid);
+          allow create: if owner(uid) && validPensionRecordV2(request.resource.data);
           allow update, delete: if false;
         }
       }

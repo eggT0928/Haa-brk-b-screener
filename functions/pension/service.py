@@ -19,7 +19,7 @@ def recent_quotes(cached, now):
             return False
         stamps = [utc(cached["priceTimes"][t]) for t in TICKERS]
         if is_open(now):
-            recent = 0 <= (now - utc(cached["updatedAt"])).total_seconds() < 600
+            recent = 0 <= (now - utc(cached["updatedAt"])).total_seconds() < 60
             if cached.get("quoteMode") == "intraday":
                 return recent and all(-60 <= (now - stamp).total_seconds() <= 1500 for stamp in stamps)
             return (
@@ -34,7 +34,7 @@ def recent_quotes(cached, now):
 
 def refresh_quotes(store, provider, now):
     now = utc(now)
-    path, gate = "market/pension", "pensionQuotes"
+    path, gate = "market/pensionV2", "pensionQuotesV2"
     cached = store.get(path)
     if recent_quotes(cached, now):
         return {
@@ -54,7 +54,9 @@ def refresh_quotes(store, provider, now):
     try:
         cached = store.get(path) or cached
         value = provider.quotes(now)
+        source = value.get("source", "Yahoo Finance")
         value = quote_payload(value["prices"], value["priceTimes"], now, value["quoteMode"])
+        value["source"] = source if source in {"Naver Finance", "Yahoo Finance"} else "온라인 시세"
         store.commit(
             {
                 path: value,
@@ -66,7 +68,7 @@ def refresh_quotes(store, provider, now):
             }
         )
         message = (
-            "Yahoo 장중 가격을 받았습니다."
+            f"{value['source']} 장중 가격을 받았습니다."
             if value["quoteMode"] == "intraday"
             else "최근 완료된 KRX 거래일 종가를 받았습니다. 실시간 가격은 아닙니다."
         )
@@ -86,7 +88,7 @@ def refresh_quotes(store, provider, now):
             return {
                 "market": cached,
                 "source": "fallback",
-                "message": "Yahoo 조회 실패로 직전 연금 시세를 표시합니다. 기준시각을 확인하세요.",
+                "message": "온라인 조회 실패로 직전 연금 시세를 표시합니다. 기준시각을 확인하세요.",
             }
         raise LookupError(
             "연금 시세 조회에 실패했고 저장된 성공값도 없습니다. 잠시 후 다시 시도하세요."
