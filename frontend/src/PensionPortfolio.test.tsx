@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { User } from 'firebase/auth';
 const fixture=vi.hoisted(()=>({docs:new Map<string,unknown>(),callbacks:new Map<string,(s:unknown)=>void>(),write:vi.fn(),add:vi.fn()}));
@@ -51,4 +51,19 @@ it('저장된 36개 숫자 이력을 종목별 보유·가격·목표로 복원�
   show();act(()=>fixture.callbacks.get('users/owner/portfolios/pension-v2/rebalances')?.({docs:[{id:'saved',data:()=>({month:'2026-10',equity:1000000,kind:'계산안',weights:defaultPensionProfile().weights,lines:PENSION_CODES.flatMap(()=>[5,10000,12]),priceUpdatedAt:market.updatedAt,oldestPriceAt:market.updatedAt})}]}));
   fireEvent.click(screen.getByRole('button',{name:'연금 저장 이력'}));
   expect(screen.getAllByText('5 → 12')).toHaveLength(12);
+});
+
+it('현재 비중·목표 대비 차이와 금·예수금을 매매안 오류와 별도로 보여준다',()=>{
+  show();
+  fireEvent.change(screen.getByLabelText('연금 379800 보유수량'),{target:{value:'20'}});
+  fireEvent.change(screen.getByLabelText('연금 0072R0 보유수량'),{target:{value:'3'}});
+  fireEvent.change(screen.getByLabelText('연금 411060 보유수량'),{target:{value:'7'}});
+  const table=within(screen.getByRole('region',{name:'연금 현재 보유 비중'}));
+  expect(within(table.getByRole('row',{name:/KODEX 미국S&P500/})).getByText('20.00%')).toBeTruthy();
+  expect(within(table.getByRole('row',{name:/KODEX 미국S&P500/})).getByText('+8.00%p')).toBeTruthy();
+  expect(within(table.getByRole('row',{name:/금 ETF 합계/})).getByText('-10.00%p')).toBeTruthy();
+  expect(within(table.getByRole('row',{name:/현재 예수금/})).getByText('70.00%')).toBeTruthy();
+  fireEvent.change(screen.getByLabelText('연금 379800 목표 보유수량'),{target:{value:'100'}});
+  expect(screen.getByRole('alert').textContent).toContain('총자산을 초과');
+  expect(within(table.getByRole('row',{name:/금 ETF 합계/})).getByText('-10.00%p')).toBeTruthy();
 });

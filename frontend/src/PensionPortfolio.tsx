@@ -3,7 +3,7 @@ import type { User } from 'firebase/auth';
 import { addDoc, collection, doc, limit, onSnapshot, orderBy, query, serverTimestamp, setDoc } from 'firebase/firestore';
 import { apiHeaders, db, demo } from './firebase';
 import { percent, timeLabel } from './portfolio';
-import { buildPensionPlan, defaultPensionProfile, effectivePensionWeights, GOLD_CODES, PENSION_PATH, PENSION_ASSETS, PENSION_CODES, pensionCsv, validatePensionProfile, won, type PensionMarket, type PensionProfile, type PensionRecord } from './pensionModel';
+import { buildPensionPlan, defaultPensionProfile, effectivePensionWeights, GOLD_CODES, PENSION_PATH, PENSION_ASSETS, PENSION_CODES, pensionAllocation, pensionDifference, pensionCsv, validatePensionProfile, won, type PensionMarket, type PensionProfile, type PensionRecord } from './pensionModel';
 import type { UpdateStatus } from './types';
 import './pension.css';
 
@@ -37,6 +37,7 @@ export function PensionPortfolio({user,ownerUid,now}:{user:User|null;ownerUid?:s
   let plan:ReturnType<typeof buildPensionPlan>|null=null,planError='';
   if(ready&&market&&profile.totalBalance>0){try{plan=buildPensionPlan(profile,market);}catch(e){planError=explain(e);}}
   const weights=effectivePensionWeights(profile,market);
+  const allocation=ready?pensionAllocation(profile,market):null;
   const weightSum=Object.values(profile.weights).reduce((s,w)=>s+w,0)+profile.goldTargetWeight;
   const stale=!market||market.quoteMode!=='intraday'||status?.ok===false||PENSION_CODES.some(c=>{
     const time=Date.parse(market.priceTimes[c]);return!Number.isFinite(time)||now-time>30*60000||time-now>60000;
@@ -80,6 +81,18 @@ export function PensionPortfolio({user,ownerUid,now}:{user:User|null;ownerUid?:s
     {status?.ok===false&&<p className="notice">연금 시세 조회에 실패해 직전 성공값과 원래 가격 시각을 유지합니다.</p>}
     <nav aria-label="연금 포트폴리오 메뉴">{[['overview','연금 리밸런싱'],['history','연금 저장 이력']].map(([id,label])=><button key={id} className={tab===id?'active':''} onClick={()=>setTab(id)}>{label}</button>)}</nav>
     {tab==='overview'&&<>
+      <section className="panel pension-allocation" aria-label="연금 현재 보유 비중">
+        <div className="section-title"><h2>현재 보유 비중</h2><span>전략 목표와 비교</span></div>
+        <p className="micro">예수금을 포함한 입력 총자산 기준 · 차이 = 현재 비중 − 목표 비중 (%p). 직접 지정한 목표수량과는 다를 수 있습니다.</p>
+        {!allocation?<p className="empty">총자산과 보유수량을 입력하고 시세를 갱신하면 현재 보유 비중을 확인할 수 있습니다. 총자산은 보유 ETF 평가액보다 작을 수 없습니다.</p>:<>
+          <div className="table-scroll"><table><thead><tr><th scope="col">종목</th><th scope="col">보유 평가액</th><th scope="col">현재 비중</th><th scope="col">목표 비중</th><th scope="col">차이</th></tr></thead><tbody>
+            {allocation.rows.map(row=>{const target=allocation.targetWeights[row.code];return <tr key={row.code}><th scope="row">{PENSION_ASSETS.find(a=>a.code===row.code)?.name}<br/><small>{row.code} · {row.held}주</small></th><td>{won(row.value)}</td><td>{percent(row.currentWeight)}</td><td>{Number.isFinite(target)&&target>=0&&target<=1?percent(target):'—'}</td><td>{pensionDifference(row.currentWeight,target)}</td></tr>;})}
+            <tr className="pension-gold-total"><th scope="row">금 ETF 합계</th><td>{won(allocation.goldWeight*profile.totalBalance)}</td><td>{percent(allocation.goldWeight)}</td><td>{Number.isFinite(profile.goldTargetWeight)&&profile.goldTargetWeight>=0&&profile.goldTargetWeight<=1?percent(profile.goldTargetWeight):'—'}</td><td>{pensionDifference(allocation.goldWeight,profile.goldTargetWeight)}</td></tr>
+            <tr><th scope="row">현재 예수금 (추정)</th><td>{won(allocation.cash)}</td><td>{percent(allocation.cashWeight)}</td><td>0.00%</td><td>{pensionDifference(allocation.cashWeight,0)}</td></tr>
+          </tbody></table></div>
+          <p className="micro">현재 예수금은 입력 총자산에서 보유 ETF 평가액을 뺀 금액입니다. 금 ETF의 개별 목표는 현재 금 보유 평가액에 비례해 계산합니다. 시세 기준 시각을 확인하세요.</p>
+        </>}
+      </section>
       <section className="panel pension-inputs"><div className="section-title"><h2>연금 자산과 목표 비중</h2><span>KRW · 정수 1주</span></div>
         {!ready&&<p className="notice">저장된 연금 정보를 확인하는 중입니다. 확인 전에는 수정·저장할 수 없습니다.</p>}
         <fieldset disabled={!ready||!!busy} className="sujin-fields">

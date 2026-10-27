@@ -40,6 +40,9 @@ export function buildPlan(profile: Profile, signal: Signal, market: Market) {
 }
 
 export const percent = (n: number | null | undefined) => n == null ? '—' : `${(n * 100).toFixed(2)}%`;
+// 차이는 현재 비중 − 목표 비중이며 단위는 퍼센트포인트다.
+export const percentagePoint = (n: number | null | undefined) => {if(n==null||!Number.isFinite(n))return '—';const value=Number((n*100).toFixed(2));return `${value>0?'+':''}${value.toFixed(2)}%p`;};
+
 // 목표는 소수점 6자리이며, 기존 소수 보유분 매매는 8자리까지 보존해 표시한다.
 export const quantityLabel = (n: number) => new Intl.NumberFormat('ko-KR', {useGrouping:false,maximumFractionDigits:8}).format(n);
 export const money = (n: number) => new Intl.NumberFormat('ko-KR', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(n);

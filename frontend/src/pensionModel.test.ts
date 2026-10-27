@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildPensionPlan, defaultPensionProfile, PENSION_ASSETS, PENSION_CODES, pensionCsv, validatePensionProfile, type PensionMarket } from './pensionModel';
+import { buildPensionPlan, defaultPensionProfile, PENSION_ASSETS, PENSION_CODES, pensionAllocation, pensionDifference, pensionCsv, validatePensionProfile, type PensionMarket } from './pensionModel';
 const market:PensionMarket={currency:'KRW',quoteMode:'close',marketDate:'2026-10-26',updatedAt:'2026-10-26T07:00:00Z',prices:Object.fromEntries(PENSION_CODES.map(c=>[c,10000])),priceTimes:Object.fromEntries(PENSION_CODES.map(c=>[c,'2026-10-26T06:30:00Z']))};
 const profile=()=>({...defaultPensionProfile(),totalBalance:1000000,principal:800000});
 describe('원본 연금 포트폴리오 계산',()=>{
@@ -64,4 +64,29 @@ it('합산 금 목표를 저장하며 개별 고정 목표는 허용하지 않�
  const p=profile();p.goldTargetWeight=.25;p.weights['379800']=.07;
  expect(()=>validatePensionProfile(p)).not.toThrow();
  p.weights['411060']=.01;expect(()=>validatePensionProfile(p)).toThrow('합산 목표');
+});
+
+
+describe('현재 보유 비중',()=>{
+  it('예수금을 포함한 총자산을 분모로 사용하고 금의 실제 평가 비율을 합산한다',()=>{
+    const p=profile();p.holdings['379800']=20;p.holdings['0072R0']=3;p.holdings['411060']=7;
+    const result=pensionAllocation(p,market)!;
+    expect(result.rows.find(r=>r.code==='379800')?.currentWeight).toBeCloseTo(.20);
+    expect(result.cashWeight).toBeCloseTo(.70);expect(result.cash).toBe(700000);
+    expect(result.goldWeight).toBeCloseTo(.10);
+    expect(result.targetWeights['0072R0']).toBeCloseTo(.06);
+    expect(result.targetWeights['411060']).toBeCloseTo(.14);
+    expect(pensionDifference(result.goldWeight,p.goldTargetWeight)).toBe('-10.00%p');
+    expect(pensionDifference(.20,.12)).toBe('+8.00%p');
+    expect(pensionDifference(.120000000001,.12)).toBe('0.00%p');
+  });
+  it('매매안의 수동 목표 오류와 분리하며 총액 0, 누락 가격, 잘못된 보유수량은 표시하지 않는다',()=>{
+    const p=profile();p.targetOverrides['379800']=100;
+    expect(()=>buildPensionPlan(p,market)).toThrow();expect(pensionAllocation(p,market)).not.toBeNull();
+    p.totalBalance=0;expect(pensionAllocation(p,market)).toBeNull();
+    p.totalBalance=1000000;p.holdings['379800']=-1;expect(pensionAllocation(p,market)).toBeNull();
+    p.holdings['379800']=101;expect(pensionAllocation(p,market)).toBeNull();
+    p.holdings['379800']=0;expect(pensionAllocation(p,{...market,prices:{...market.prices,'379800':0}})).toBeNull();
+    expect(pensionAllocation(p,null)).toBeNull();
+  });
 });

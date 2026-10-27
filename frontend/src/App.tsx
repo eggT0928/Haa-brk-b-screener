@@ -9,7 +9,7 @@ import { PensionPortfolio } from './PensionPortfolio';
 import { useFamilyAccess } from './familyAccess';
 import { FamilyAccessPanel } from './FamilyAccessPanel';
 import { marketSession } from './marketSession';
-import { buildPlan, defaultProfile, money, percent, quantityLabel, timeLabel, validateProfile } from './portfolio';
+import { buildPlan, defaultProfile, money, percent, percentagePoint, quantityLabel, timeLabel, validateProfile } from './portfolio';
 import { TICKERS, type Backtest, type Market, type Profile, type Rebalance, type Signal, type UpdateStatus } from './types';
 
 const explainError = (e: unknown) => e instanceof Error ? e.message : '요청 처리에 실패했습니다.';
@@ -197,9 +197,11 @@ export default function App() {
               {plan ? <>
                 <div className="balance"><span>현재 평가금액</span><strong>{money(plan.equity)}</strong><small>{profile.quantityMode==='fractional'?'소수점':'정수'} 목표수량 적용 후 예상 현금 {money(plan.remainingCash)}</small></div>
                 {(stale || failed) && <p className="notice">장외·지연 시세 또는 직전 성공값입니다. 거래 전 증권사 가격을 확인하세요.</p>}
-                <div className="table-scroll"><table><thead><tr><th>실전 종목</th><th>비중</th><th>보유 → 목표</th><th>매매 수량</th><th>평가 가격</th></tr></thead><tbody>
-                  {plan.lines.map(l=><tr key={l.ticker}><th>{l.ticker}</th><td>{(l.weight*100).toFixed(0)}%</td><td>{quantityLabel(l.held)} → {quantityLabel(l.target)}</td><td className={l.trade<0?'negative':'positive'}>{l.trade>0?'+':''}{quantityLabel(l.trade)}</td><td title={timeLabel(market?.priceTimes[l.ticker])}>{money(l.price)}</td></tr>)}
+                <div className="table-scroll"><table><thead><tr><th>실전 종목</th><th>현재 비중</th><th>목표 비중</th><th>차이</th><th>보유 → 목표</th><th>매매 수량</th><th>평가 가격</th></tr></thead><tbody>
+                  {plan.lines.map(l=>{const current=plan.equity>0?l.held*l.price/plan.equity:null;return <tr key={l.ticker}><th scope="row">{l.ticker}</th><td>{percent(current)}</td><td>{percent(l.weight)}</td><td>{percentagePoint(current===null?null:current-l.weight)}</td><td>{quantityLabel(l.held)} → {quantityLabel(l.target)}</td><td className={l.trade<0?'negative':'positive'}>{l.trade>0?'+':''}{quantityLabel(l.trade)}</td><td title={timeLabel(market?.priceTimes[l.ticker])}>{money(l.price)}</td></tr>;})}
+                  <tr><th scope="row">현금</th><td>{percent(plan.equity>0?profile.cash/plan.equity:null)}</td><td>{percent(confirmed?.weights.CASH??0)}</td><td>{percentagePoint(plan.equity>0?profile.cash/plan.equity-(confirmed?.weights.CASH??0):null)}</td><td>—</td><td>—</td><td>—</td></tr>
                 </tbody></table></div>
+                <p className="micro">현재 비중은 현금을 포함한 현재 평가금액 기준입니다. 차이는 현재 비중에서 확정 신호의 목표 비중을 뺀 값입니다.</p>
                 <p className="micro">매도 후 매수하는 계산입니다. 수수료·세금·환전·호가 차이는 제외하며, 보유자산은 자동 변경하지 않습니다. 가격 셀에 마우스를 올리면 시세 시각을 확인할 수 있습니다.</p>
                 {(stale || failed) && <label className="check"><input type="checkbox" checked={acknowledged} onChange={e=>setAcknowledged(e.target.checked)}/>지연 또는 직전 성공 시세인 점을 확인했습니다.</label>}
                 <button disabled={saving || demo || !profileReady || ((stale || failed) && !acknowledged)} onClick={recordPlan}>계산안 이력 저장 · 주문 아님</button>

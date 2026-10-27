@@ -2,8 +2,8 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { User } from 'firebase/auth';
 import { addDoc, collection, doc, limit, onSnapshot, orderBy, query, serverTimestamp, setDoc } from 'firebase/firestore';
 import { apiHeaders, db, demo } from './firebase';
-import { money, percent, timeLabel } from './portfolio';
-import { buildSujinPlan, defaultSujinProfile, SUJIN_TICKERS, SUJIN_WEIGHTS, sujinCsv, validateSujinProfile, type SujinProfile, type SujinRecord } from './sujinModel';
+import { money, percent, percentagePoint, timeLabel } from './portfolio';
+import { buildSujinComparison, buildSujinPlan, defaultSujinProfile, SUJIN_TICKERS, SUJIN_WEIGHTS, sujinCsv, validateSujinProfile, type SujinProfile, type SujinRecord } from './sujinModel';
 import type { Backtest, Market, UpdateStatus } from './types';
 import './sujin.css';
 
@@ -51,6 +51,10 @@ export function SujinPortfolio({ user, ownerUid=user?.uid, now, renderBacktest }
   const edit = (next: Partial<SujinProfile>) => {dirty.current=true;setProfile(p=>({...p,...next}));setMessage('');};
   let plan: ReturnType<typeof buildSujinPlan> | null = null, planError='';
   if (market && profileReady) {try {plan=buildSujinPlan(profile,market);} catch(e) {planError=explain(e);}}
+  let comparison: ReturnType<typeof buildSujinComparison> | null = null;
+  if (market && profileReady) {try {comparison=buildSujinComparison(profile,market);} catch { /* 입력·가격 오류는 계산안에서 안내한다. */ }}
+  const comparisonGroups = comparison?.groups ?? Object.entries(SUJIN_WEIGHTS).map(([ticker,weight])=>({ticker,weight,current:null,deviation:null}));
+  const cashWeight = comparison ? Math.max(0,comparison.equity-comparison.holdingsValue)/comparison.equity : null;
   const stale = !market || status?.ok === false || SUJIN_TICKERS.some(t=>!market.priceTimes[t]
     || !Number.isFinite(Date.parse(market.priceTimes[t])) || now-Date.parse(market.priceTimes[t])>30*60000
     || Date.parse(market.priceTimes[t])-now>60000);
@@ -158,8 +162,9 @@ export function SujinPortfolio({ user, ownerUid=user?.uid, now, renderBacktest }
           </>}
         </section>
       </div>
-      {plan&&<section className="panel sujin-comparison"><div className="section-title"><h2>현재 비중과 목표의 차이</h2><span>총자산·예수금 포함 기준</span></div>
-        <div className="table-scroll"><table><thead><tr><th>자산군</th><th>현재</th><th>목표</th><th>차이 (%p)</th></tr></thead><tbody>{[...plan.groups].sort((a,b)=>Math.abs(b.deviation)-Math.abs(a.deviation)).map(g=><tr key={g.ticker}><th>{g.ticker}</th><td>{percent(g.current)}</td><td>{percent(g.weight)}</td><td className={g.deviation<0?'negative':'positive'}>{g.deviation>0?'+':''}{(g.deviation*100).toFixed(2)}</td></tr>)}</tbody></table></div>
+      {profileReady&&<section className="panel sujin-comparison"><div className="section-title"><h2>현재 비중과 목표의 차이</h2><span>총자산·예수금 포함 기준</span></div>
+        <div className="table-scroll"><table><thead><tr><th>자산군</th><th>현재</th><th>목표</th><th>차이 (%p)</th></tr></thead><tbody>{[...comparisonGroups].sort((a,b)=>Math.abs(b.deviation??0)-Math.abs(a.deviation??0)).map(g=><tr key={g.ticker}><th scope="row">{g.ticker}</th><td>{percent(g.current)}</td><td>{percent(g.weight)}</td><td className={(g.deviation??0)<0?'negative':'positive'}>{percentagePoint(g.deviation)}</td></tr>)}<tr><th scope="row">현금·예수금</th><td>{percent(cashWeight)}</td><td>0.00%</td><td>{percentagePoint(cashWeight)}</td></tr></tbody></table></div>
+        <p className="micro">차이는 현재 비중 − 목표 비중입니다. 시세 또는 총자산이 없으면 현재 비중을 —로 표시합니다. 직접 입력한 총자산에는 예수금과 추가 투입 금액이 포함됩니다.</p>
       </section>}
     </>}
     {tab==='backtest'&&<section className="panel"><div className="section-title"><h2>수진 장기 백테스트</h2><span>고정비중 월별 리밸런싱</span></div>

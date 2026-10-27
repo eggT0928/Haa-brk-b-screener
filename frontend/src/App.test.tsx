@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 vi.mock('./firebase', () => ({ demo: true, configured: false, auth: null, db: null, login: vi.fn(), logout: vi.fn(), apiHeaders: vi.fn() }));
 import App from './App';
@@ -57,4 +57,21 @@ describe('한국어 웹앱', () => {
     expect((screen.getByRole('spinbutton',{name:'수진 SPY 보유수량'}) as HTMLInputElement).value).toBe('1');
     expect((screen.getByRole('button',{name:'시세 수동 갱신'}) as HTMLButtonElement).disabled).toBe(true);
   });
+});
+
+it('현금 포함 현재 비중과 SPY·SPYM 각각의 목표 차이를 표시한다',()=>{
+  render(<App/>);
+  fireEvent.change(screen.getByLabelText('실전 S&P500 ETF'),{target:{value:'SPYM'}});
+  fireEvent.change(screen.getByLabelText('SPY 보유수량'),{target:{value:'10'}});
+  const table=screen.getByRole('columnheader',{name:'실전 종목'}).closest('table')!;
+  const rows=within(table).getAllByRole('row');
+  const spy=rows.find(r=>within(r).queryByRole('rowheader',{name:'SPY'}))!;
+  const spym=rows.find(r=>within(r).queryByRole('rowheader',{name:'SPYM'}))!;
+  const cash=rows.find(r=>within(r).queryByRole('rowheader',{name:'현금'}))!;
+  expect(spy.textContent).toContain('37.50%0.00%+37.50%p');
+  expect(spym.textContent).toContain('0.00%20.00%-20.00%p');
+  expect(cash.textContent).toContain('62.50%0.00%+62.50%p');
+  fireEvent.change(screen.getByLabelText('현금 잔액 (USD)'),{target:{value:'0'}});
+  fireEvent.change(screen.getByLabelText('SPY 보유수량'),{target:{value:'0'}});
+  expect(within(spym).getAllByText('—')).toHaveLength(2);
 });

@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { User } from 'firebase/auth';
 const fixture=vi.hoisted(()=>({docs:new Map<string,unknown>(),callbacks:new Map<string,(s:unknown)=>void>(),writes:vi.fn(),adds:vi.fn()}));
@@ -83,4 +83,22 @@ describe('수진 저장·갱신 화면',()=>{
     const view=show();fireEvent.click(screen.getByRole('button',{name:'시세 수동 갱신'}));
     await act(async()=>{});view.unmount();expect(signal?.aborted).toBe(true);expect(fixture.callbacks.size).toBe(0);
   });
+});
+
+it('SPY 초과 보유에서도 현재 비중과 목표 차이를 표시한다',()=>{
+  show();fireEvent.change(screen.getByLabelText('수진 SPY 보유수량'),{target:{value:'30'}});
+  fireEvent.change(screen.getByLabelText('수진 SPYM 보유수량'),{target:{value:'5'}});
+  expect(screen.getByText(/SPY만으로 목표 비중/)).toBeTruthy();
+  const table=screen.getByRole('columnheader',{name:'자산군'}).closest('table')!;
+  const row=within(table).getByRole('rowheader',{name:'SPY+SPYM'}).closest('tr')!;
+  expect(row.textContent).toContain('35.00%20.00%+15.00%p');
+  const cash=within(table).getByRole('rowheader',{name:'현금·예수금'}).closest('tr')!;
+  expect(cash.textContent).toContain('65.00%0.00%+65.00%p');
+});
+
+it('시세가 없으면 목표를 유지하고 현재 비중과 차이는 표시하지 않는다',()=>{
+  fixture.docs.delete('market/sujin');show();
+  const table=screen.getByRole('columnheader',{name:'자산군'}).closest('table')!;
+  const row=within(table).getByRole('rowheader',{name:'SPY+SPYM'}).closest('tr')!;
+  expect(row.textContent).toContain('—20.00%—');
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildSujinPlan, defaultSujinProfile, SUJIN_TICKERS, sujinCsv, validateSujinProfile } from './sujinModel';
+import { buildSujinComparison, buildSujinPlan, defaultSujinProfile, SUJIN_TICKERS, sujinCsv, validateSujinProfile } from './sujinModel';
 import type { Market } from './types';
 const market: Market = {prices:Object.fromEntries(SUJIN_TICKERS.map(t=>[t,100])),
   priceTimes:Object.fromEntries(SUJIN_TICKERS.map(t=>[t,'2026-08-28T20:00:00Z'])),updatedAt:'2026-08-28T21:30:00Z'};
@@ -60,4 +60,13 @@ describe('수진 고정비중 수량 계산',()=>{
     const csv=sujinCsv(result.lines);
     expect(csv.startsWith('\uFEFF종목')).toBe(true);expect(csv).toContain('SPYM,20.0000,100,0,20,20,2000.00');
   });
+});
+
+it('SPY 초과로 매매안이 없어도 SPY·SPYM 합산 비중을 계산한다',()=>{
+  const p=profile();p.holdings.SPY=30;p.holdings.SPYM=5;
+  expect(()=>buildSujinPlan(p,market)).toThrow('SPY만으로');
+  const c=buildSujinComparison(p,market);
+  expect(c.groups.find(g=>g.ticker==='SPY+SPYM')).toMatchObject({current:.35,weight:.2});
+  expect(c.groups.find(g=>g.ticker==='SPY+SPYM')?.deviation).toBeCloseTo(.15);
+  expect((c.equity-c.holdingsValue)/c.equity).toBe(.65);
 });

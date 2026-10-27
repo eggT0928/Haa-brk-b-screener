@@ -1,4 +1,5 @@
 import type { Market } from './types';
+import { percentagePoint } from './portfolio';
 
 // magic-pension-rebalancer-streamlit @9fe50d9, final shared-chat configuration.
 export const PENSION_PATH='pension-v2';
@@ -48,6 +49,29 @@ export function effectivePensionWeights(p:PensionProfile,m:PensionMarket|null) {
   const fallback=[1730960/4499000,2768040/4499000];
   GOLD_CODES.forEach((c,i)=>weights[c]=p.goldTargetWeight*(total>0?values[i]/total:fallback[i]));
   return weights;
+}
+// 보유 비중은 매매안 입력의 유효성과 별도로 계산한다. 총자산에는 예수금이 포함된다.
+export function pensionAllocation(p:PensionProfile,m:PensionMarket|null){
+  if(!m||m.currency!=='KRW'||!Number.isFinite(p.totalBalance)||p.totalBalance<=0||p.totalBalance>1e12)return null;
+  if(!fixedMap(p.holdings)||!fixedMap(p.weights))return null;
+  const rows=PENSION_CODES.map(code=>{
+    const held=p.holdings[code],price=m.prices?.[code],stamp=m.priceTimes?.[code];
+    if(!Number.isInteger(held)||held<0||held>1e9||!Number.isFinite(price)||price<=0||price>1e12||!stamp||!Number.isFinite(Date.parse(stamp)))return null;
+    const value=held*price;
+    return {code,held,value,currentWeight:value/p.totalBalance};
+  });
+  if(rows.some(row=>row===null))return null;
+  const validRows=rows.filter((row):row is NonNullable<typeof row>=>row!==null);
+  const holdingsValue=validRows.reduce((sum,row)=>sum+row.value,0);
+  if(holdingsValue>p.totalBalance+.0001)return null;
+  const targetWeights=effectivePensionWeights(p,m);
+  const goldValue=validRows.filter(row=>GOLD_CODES.includes(row.code)).reduce((sum,row)=>sum+row.value,0);
+  return {rows:validRows, targetWeights, goldWeight:goldValue/p.totalBalance,
+    cash:Math.max(0,p.totalBalance-holdingsValue),cashWeight:Math.max(0,p.totalBalance-holdingsValue)/p.totalBalance};
+}
+export function pensionDifference(current:number,target:number){
+  if(!Number.isFinite(current)||!Number.isFinite(target)||target<0||target>1)return '—';
+  return percentagePoint(current-target);
 }
 export function buildPensionPlan(p:PensionProfile,m:PensionMarket){
   validatePensionProfile(p);
