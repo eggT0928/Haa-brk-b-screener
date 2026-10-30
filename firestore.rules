@@ -1,5 +1,5 @@
 rules_version = '2';
-// pension-v2: 별도 12종목 프로필. 금 개별 weights는 0, goldTargetWeight와 나머지 합은 100%.
+// pension-v2: 선택 cashBalance(원, 0~1e12). 별도 12종목 프로필. 금 개별 weights는 0, goldTargetWeight와 나머지 합은 100%.
 // v2 이력은 실행 시 유효 비중 합100%와 고정순서 [held,price,target] × 12인 36개 숫자. v1 이력 순서는 유지.
 // 데이터 모델: access/{caller}는 서버 발급 enabled/ownerUid/role이며 본인 읽기만 가능하다.
 // users/{ownerUid}: HAA holdings12/cash/sp500/기간/updatedAt + 선택 quantityMode(구문서 정수).
@@ -152,7 +152,8 @@ service cloud.firestore {
       return pensionMapV2(w) && a>=0 && b>=0 && c>=0 && d>=0 && e>=0 && f>=0 && g>=0 && h>=0 && i>=0 && j>=0 && math.abs(a+b+c+d+e+f+g+h+i+j+extra-1)<0.00000001;
     }
     function validPensionProfileV2(d) {
-      return d.keys().hasOnly(['strategy','currency','totalBalance','principal','holdings','weights','targetOverrides','goldTargetWeight','updatedAt'])
+      return d.keys().hasOnly(['strategy','currency','totalBalance','principal','holdings','weights','targetOverrides','goldTargetWeight','cashBalance','updatedAt'])
+        && (!('cashBalance' in d) || amount(d.cashBalance))
         && d.strategy == 'magic-pension-v2' && d.currency == 'KRW'
         && amount(d.totalBalance) && amount(d.principal)
         && pensionHoldingsV2(d.holdings) && d.goldTargetWeight>=0 && d.goldTargetWeight<=1 && d.weights['0072R0']==0 && d.weights['411060']==0 && pensionWeightsV2(d.weights,d.goldTargetWeight) && pensionOverridesV2(d.targetOverrides)

@@ -35,7 +35,7 @@ export function PensionPortfolio({user,ownerUid,now}:{user:User|null;ownerUid?:s
   },[user?.uid,ownerUid]);
   function edit(next:Partial<PensionProfile>){if(!ready||busy)return;dirty.current=true;setProfile(p=>({...p,...next}));setMessage('');}
   let plan:ReturnType<typeof buildPensionPlan>|null=null,planError='';
-  if(ready&&market&&profile.totalBalance>0){try{plan=buildPensionPlan(profile,market);}catch(e){planError=explain(e);}}
+  if(ready&&market&&(profile.totalBalance>0||profile.cashBalance!==undefined||Object.values(profile.holdings).some(n=>n>0))){try{plan=buildPensionPlan(profile,market);}catch(e){planError=explain(e);}}
   const weights=effectivePensionWeights(profile,market);
   const allocation=ready?pensionAllocation(profile,market):null;
   const weightSum=Object.values(profile.weights).reduce((s,w)=>s+w,0)+profile.goldTargetWeight;
@@ -56,7 +56,7 @@ export function PensionPortfolio({user,ownerUid,now}:{user:User|null;ownerUid?:s
   }
   async function save(){
     if(demo||!db||!user||!ownerUid||!ready||busy)return;setBusy('save');setError('');setMessage('');
-    try{validatePensionProfile(profile);await setDoc(doc(db,'users',ownerUid,'portfolios',PENSION_PATH),{...profile,updatedAt:serverTimestamp()});
+    try{validatePensionProfile(profile);await setDoc(doc(db,'users',ownerUid,'portfolios',PENSION_PATH),{...Object.fromEntries(Object.entries(profile).filter(([,value])=>value!==undefined)),updatedAt:serverTimestamp()});
       if(alive.current){dirty.current=false;setMessage('연금 보유수량·총자산·원금·목표 비중을 저장했습니다.');}}
     catch(e){if(alive.current)setError(explain(e));}finally{if(alive.current)setBusy('');}
   }
@@ -83,20 +83,22 @@ export function PensionPortfolio({user,ownerUid,now}:{user:User|null;ownerUid?:s
     {tab==='overview'&&<>
       <section className="panel pension-allocation" aria-label="연금 현재 보유 비중">
         <div className="section-title"><h2>현재 보유 비중</h2><span>전략 목표와 비교</span></div>
-        <p className="micro">예수금을 포함한 입력 총자산 기준 · 차이 = 현재 비중 − 목표 비중 (%p). 직접 지정한 목표수량과는 다를 수 있습니다.</p>
-        {!allocation?<p className="empty">총자산과 보유수량을 입력하고 시세를 갱신하면 현재 보유 비중을 확인할 수 있습니다. 총자산은 보유 ETF 평가액보다 작을 수 없습니다.</p>:<>
+        <p className="micro">계산 기준 총자산(보유 평가액 + 예수금) 기준 · 차이 = 현재 비중 − 목표 비중 (%p). 직접 지정한 목표수량과는 다를 수 있습니다.</p>
+        {allocation?.assumedCash&&<p className="notice">입력한 총자산이 현재 보유 ETF 평가액보다 작아, 예수금을 0원으로 가정하고 보유 평가액으로 계산합니다. 실제 예수금이 있다면 아래 예수금에 입력하세요.</p>}
+        {!allocation?<p className="empty">보유수량과 예수금을 입력하고 시세를 갱신하면 현재 보유 비중을 확인할 수 있습니다.</p>:<>
           <div className="table-scroll"><table><thead><tr><th scope="col">종목</th><th scope="col">보유 평가액</th><th scope="col">현재 비중</th><th scope="col">목표 비중</th><th scope="col">차이</th></tr></thead><tbody>
             {allocation.rows.map(row=>{const target=allocation.targetWeights[row.code];return <tr key={row.code}><th scope="row">{PENSION_ASSETS.find(a=>a.code===row.code)?.name}<br/><small>{row.code} · {row.held}주</small></th><td>{won(row.value)}</td><td>{percent(row.currentWeight)}</td><td>{Number.isFinite(target)&&target>=0&&target<=1?percent(target):'—'}</td><td>{pensionDifference(row.currentWeight,target)}</td></tr>;})}
-            <tr className="pension-gold-total"><th scope="row">금 ETF 합계</th><td>{won(allocation.goldWeight*profile.totalBalance)}</td><td>{percent(allocation.goldWeight)}</td><td>{Number.isFinite(profile.goldTargetWeight)&&profile.goldTargetWeight>=0&&profile.goldTargetWeight<=1?percent(profile.goldTargetWeight):'—'}</td><td>{pensionDifference(allocation.goldWeight,profile.goldTargetWeight)}</td></tr>
-            <tr><th scope="row">현재 예수금 (추정)</th><td>{won(allocation.cash)}</td><td>{percent(allocation.cashWeight)}</td><td>0.00%</td><td>{pensionDifference(allocation.cashWeight,0)}</td></tr>
+            <tr className="pension-gold-total"><th scope="row">금 ETF 합계</th><td>{won(allocation.goldWeight*allocation.equity)}</td><td>{percent(allocation.goldWeight)}</td><td>{Number.isFinite(profile.goldTargetWeight)&&profile.goldTargetWeight>=0&&profile.goldTargetWeight<=1?percent(profile.goldTargetWeight):'—'}</td><td>{pensionDifference(allocation.goldWeight,profile.goldTargetWeight)}</td></tr>
+            <tr><th scope="row">{allocation.explicitCash?'현재 예수금':'현재 예수금 (추정)'}</th><td>{won(allocation.cash)}</td><td>{percent(allocation.cashWeight)}</td><td>0.00%</td><td>{pensionDifference(allocation.cashWeight,0)}</td></tr>
           </tbody></table></div>
-          <p className="micro">현재 예수금은 입력 총자산에서 보유 ETF 평가액을 뺀 금액입니다. 금 ETF의 개별 목표는 현재 금 보유 평가액에 비례해 계산합니다. 시세 기준 시각을 확인하세요.</p>
+          <p className="micro">예수금을 직접 입력하면 시세가 변할 때 총자산이 자동으로 바뀝니다. 미입력 시 기존 총자산과 보유 평가액의 차이로 예수금을 추정합니다. 금 ETF의 개별 목표는 현재 금 보유 평가액에 비례해 계산합니다. 시세 기준 시각을 확인하세요.</p>
         </>}
       </section>
       <section className="panel pension-inputs"><div className="section-title"><h2>연금 자산과 목표 비중</h2><span>KRW · 정수 1주</span></div>
         {!ready&&<p className="notice">저장된 연금 정보를 확인하는 중입니다. 확인 전에는 수정·저장할 수 없습니다.</p>}
         <fieldset disabled={!ready||!!busy} className="sujin-fields">
-          <div className="pension-totals"><label>연금 총자산 · 평가금액 + 예수금 (원)<input type="number" min="0" max="1000000000000" step="1" value={Number.isNaN(profile.totalBalance)?'':profile.totalBalance} onChange={e=>edit({totalBalance:e.target.valueAsNumber})}/></label>
+          <div className="pension-totals"><label>기존 연금 총자산 · 평가금액 + 예수금 (원)<input type="number" min="0" max="1000000000000" step="1" value={Number.isNaN(profile.totalBalance)?'':profile.totalBalance} onChange={e=>edit({totalBalance:e.target.valueAsNumber})}/></label>
+            <label>연금 예수금 (원) · 입력하면 총자산 자동 계산<input aria-label="연금 예수금 (원)" type="number" min="0" max="1000000000000" step="1" placeholder="미입력 시 기존 총자산 사용" value={profile.cashBalance===undefined||Number.isNaN(profile.cashBalance)?'':profile.cashBalance} onChange={e=>edit({cashBalance:e.target.value===''?undefined:e.target.valueAsNumber})}/></label>
             <label>연금 원금 · 누적 투자금 (원)<input type="number" min="0" max="1000000000000" step="1" value={Number.isNaN(profile.principal)?'':profile.principal} onChange={e=>edit({principal:e.target.valueAsNumber})}/></label></div>
           <div className="section-title"><p>목표 비중 합계 <strong className={Math.abs(weightSum-1)>1e-8?'negative':''}>{percent(weightSum)}</strong></p><div className="pension-actions"><button onClick={()=>edit({weights:defaultPensionProfile().weights,goldTargetWeight:.20})}>기본 비중 복원</button><button onClick={()=>edit({targetOverrides:defaultPensionProfile().targetOverrides})}>목표수량 자동 계산으로</button></div></div>
           <label>금 ETF 합산 목표 비중 (%)<input aria-label="금 ETF 합산 목표 비중 (%)" type="number" min="0" max="100" step="0.1" value={Number.isNaN(profile.goldTargetWeight)?'':profile.goldTargetWeight*100} onChange={e=>edit({goldTargetWeight:e.target.valueAsNumber/100})}/></label>
@@ -108,15 +110,16 @@ export function PensionPortfolio({user,ownerUid,now}:{user:User|null;ownerUid?:s
             <label>목표 보유수량 · 빈칸은 자동<input aria-label={`연금 ${a.code} 목표 보유수량`} type="number" min="0" max="1000000000" step="1" placeholder={line?String(Math.floor(line.calculated)):'자동'} value={profile.targetOverrides[a.code]??''} onChange={e=>edit({targetOverrides:{...profile.targetOverrides,[a.code]:e.target.value===''?null:e.target.valueAsNumber}})}/></label>
           </div>;})}</div>
         </fieldset>
+        <p className="micro">예수금을 입력하면 보유 ETF의 현재 평가액과 합산해 총자산을 자동 계산합니다. 예수금이 없다면 0을 입력하세요. 비워 두면 기존 입력 총자산을 사용하며, 보유 평가액보다 낮으면 예수금 0원으로 가정합니다.</p>
         <p className="micro">목표 보유수량은 리밸런싱 후 보유할 전체 수량입니다. 0을 입력하면 전량 매도 대상으로 계산합니다. 비워 두면 총자산 × 목표 비중 ÷ 가격을 정수로 내림합니다. 상품명은 기존 앱 표기이며 종목코드로 구분합니다.</p>
         <button className="primary" onClick={save} disabled={demo||!ready||!!busy}>연금 보유수량·설정 저장</button>
       </section>
       <section className="panel pension-plan"><div className="section-title"><h2>연금 리밸런싱 계산안</h2><span>현재 입력 기준</span></div>
         {!market&&<p className="empty">‘연금 시세 갱신’을 눌러 가격을 불러오세요. 기존 Streamlit 입력은 자동으로 이전되지 않으므로 처음 한 번 입력·저장해 주세요. 이전 9종목 구성의 입력과 이력은 별도로 보존됩니다.</p>}
-        {market&&profile.totalBalance<=0&&<p className="empty">총자산을 입력하면 목표 수량을 계산합니다.</p>}{planError&&<p className="error" role="alert">{planError}</p>}
+        {market&&!plan&&!planError&&<p className="empty">보유수량과 예수금 또는 기존 총자산을 입력하면 목표 수량을 계산합니다.</p>}{planError&&<p className="error" role="alert">{planError}</p>}
         {plan&&<>
-          <div className="metric-grid">{[['입력 총자산',won(plan.equity)],['보유 ETF 평가액',won(plan.holdingsValue)],['리밸런싱 후 예상 예수금',won(plan.remainingCash)],['입력 총자산 기준 손익',plan.profit===null?'—':won(plan.profit)],['원금 대비 수익률',percent(plan.profitRate)]].map(([label,value])=><div key={label}><span>{label}</span><strong>{value}</strong></div>)}</div>
-          <p className="micro">원금 0은 미입력으로 처리합니다. 손익은 예수금을 포함한 입력 총자산에서 원금을 뺀 값입니다. 가장 오래된 사용 시세 {timeLabel(plan.oldestPriceAt)}</p>
+          <div className="metric-grid">{[['계산 기준 총자산',won(plan.equity)],['보유 ETF 평가액',won(plan.holdingsValue)],['리밸런싱 후 예상 예수금',won(plan.remainingCash)],['계산 기준 손익',plan.profit===null?'—':won(plan.profit)],['원금 대비 수익률',percent(plan.profitRate)]].map(([label,value])=><div key={label}><span>{label}</span><strong>{value}</strong></div>)}</div>
+          <p className="micro">원금 0은 미입력으로 처리합니다. 손익은 계산 기준 총자산에서 원금을 뺀 값입니다. 가장 오래된 사용 시세 {timeLabel(plan.oldestPriceAt)}</p>
           <div className="table-scroll"><table><thead><tr><th>종목</th><th>목표 배분액</th><th>계산 수량</th><th>보유 → 최종 목표</th><th>매매 수량</th><th>목표 금액</th></tr></thead><tbody>{plan.lines.map(l=><tr key={l.ticker}><th>{l.ticker}</th><td>{won(l.allocation)}</td><td>{l.calculated.toFixed(2)}</td><td>{l.held} → {l.target}</td><td className={l.trade<0?'negative':'positive'}>{l.trade>0?'+':''}{l.trade}</td><td>{won(l.target*l.price)}</td></tr>)}</tbody></table></div>
           <p className="micro">매매 수량은 최종 목표에서 보유수량을 뺀 값입니다. 계산안 저장은 실제 주문이나 보유수량 변경을 수행하지 않습니다. 수수료·세금·호가 차이는 제외합니다.</p>
           {stale&&<label className="check"><input type="checkbox" checked={ack} onChange={e=>setAck(e.target.checked)}/>연금 계산안이 종가·지연 또는 직전 성공 시세 기준임을 확인했습니다.</label>}

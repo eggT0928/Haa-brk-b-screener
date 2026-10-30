@@ -22,11 +22,11 @@ describe('원본 연금 포트폴리오 계산',()=>{
     const p=profile();p.principal=0;p.holdings['379800']=2;
     const plan=buildPensionPlan(p,market);expect(plan.profitRate).toBeNull();expect(plan.profit).toBeNull();expect(plan.holdingsValue).toBe(20000);
   });
-  it('수동 목표 초과 지출과 음수 예수금 입력을 차단한다',()=>{
+  it('수동 목표 초과 지출과 잘못된 예수금을 차단한다',()=>{
     const p=profile();p.targetOverrides['379800']=100;
     expect(()=>buildPensionPlan(p,market)).toThrow('총자산을 초과');
-    p.targetOverrides['379800']=null;p.holdings['379800']=101;
-    expect(()=>buildPensionPlan(p,market)).toThrow('보유 ETF 평가액보다');
+    p.targetOverrides['379800']=null;p.cashBalance=-1;
+    expect(()=>buildPensionPlan(p,market)).toThrow('예수금');
   });
   it.each([0,-1,NaN,Infinity])('누락·잘못된 가격 %s을 전량 매도로 대입하지 않는다',n=>{
     expect(()=>buildPensionPlan(profile(),{...market,prices:{...market.prices,'411060':n}})).toThrow('411060');
@@ -85,8 +85,33 @@ describe('현재 보유 비중',()=>{
     expect(()=>buildPensionPlan(p,market)).toThrow();expect(pensionAllocation(p,market)).not.toBeNull();
     p.totalBalance=0;expect(pensionAllocation(p,market)).toBeNull();
     p.totalBalance=1000000;p.holdings['379800']=-1;expect(pensionAllocation(p,market)).toBeNull();
-    p.holdings['379800']=101;expect(pensionAllocation(p,market)).toBeNull();
+    p.holdings['379800']=101;expect(pensionAllocation(p,market)?.assumedCash).toBe(true);
     p.holdings['379800']=0;expect(pensionAllocation(p,{...market,prices:{...market.prices,'379800':0}})).toBeNull();
     expect(pensionAllocation(p,null)).toBeNull();
+  });
+});
+
+
+describe('평가손실과 자동 총자산',()=>{
+  it('보유 평가액이 기존 총자산보다 높아도 예수금 0원 가정을 알리고 계산한다',()=>{
+    const p=profile();p.totalBalance=800000;p.principal=1200000;p.holdings['379800']=100;
+    const plan=buildPensionPlan(p,market), allocation=pensionAllocation(p,market)!;
+    expect(plan.equity).toBe(1000000);expect(plan.assumedCash).toBe(true);expect(plan.cash).toBe(0);
+    expect(plan.profit).toBe(-200000);expect(plan.profitRate).toBeCloseTo(-1/6);
+    expect(plan.lines[0]).toMatchObject({held:100,target:12,trade:-88});
+    expect(allocation.equity).toBe(plan.equity);expect(allocation.rows[0].currentWeight).toBe(1);
+  });
+  it('명시 예수금과 최신 가격으로 총자산·손익·목표 수량과 비중을 다시 계산한다',()=>{
+    const p=profile();p.totalBalance=100;p.principal=1500000;p.cashBalance=200000;p.holdings['379800']=100;
+    const first=buildPensionPlan(p,market);expect(first.equity).toBe(1200000);expect(first.profit).toBe(-300000);expect(first.assumedCash).toBe(false);
+    const reduced={...market,prices:{...market.prices,'379800':8000}};
+    const second=buildPensionPlan(p,reduced),alloc=pensionAllocation(p,reduced)!;
+    expect(second.equity).toBe(1000000);expect(second.profit).toBe(-500000);expect(second.profitRate).toBeCloseTo(-1/3);
+    expect(second.lines[0].target).toBe(15);expect(alloc.rows[0].currentWeight).toBeCloseTo(.8);expect(alloc.cashWeight).toBeCloseTo(.2);
+  });
+  it('기존 총자산만 있으면 양의 예수금 추정과 기존 계산을 보존한다',()=>{
+    const p=profile();p.holdings['379800']=40;
+    const plan=buildPensionPlan(p,market);expect(plan.equity).toBe(1000000);expect(plan.cash).toBe(600000);expect(plan.explicitCash).toBe(false);
+    p.totalBalance=0;p.holdings['379800']=0;expect(()=>buildPensionPlan(p,market)).toThrow('총자산');
   });
 });

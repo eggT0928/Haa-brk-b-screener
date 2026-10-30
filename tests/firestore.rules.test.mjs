@@ -279,6 +279,18 @@ test('12종목: V2 공유 구성원은 연금 설정과 계산안을 같은 소�
   if(haa.data().cash!==10000||sujin.data().strategy!=='sujin-fixed-v1')throw new Error('연금 저장이 다른 포트폴리오를 변경했습니다.');
 });
 
+test('12종목: 예수금은 선택 입력이며 숫자 범위와 가족 권한을 검증한다',async()=>{
+  const ref=doc(owner(),'users/owner/portfolios/pension-v2'),p=pensionProfileV2();
+  await assertSucceeds(setDoc(ref,p));
+  for(const cashBalance of [0,150000,1e12])await assertSucceeds(setDoc(ref,{...p,cashBalance}));
+  for(const cashBalance of [-1,1e13,NaN,Infinity,null,true,'1000']){
+    await assertFails(setDoc(ref,{...p,cashBalance}));
+    await assertFails(updateDoc(ref,{cashBalance,updatedAt:serverTimestamp()}));
+  }
+  await assertSucceeds(updateDoc(ref,{cashBalance:deleteField(),updatedAt:serverTimestamp()}));
+  await assertFails(setDoc(doc(env.authenticatedContext('stranger').firestore(),'users/owner/portfolios/pension-v2'),{...p,cashBalance:1}));
+});
+
 test('12종목: 미인증·미승인·다른 가족은 연금 설정과 이력을 읽거나 변경할 수 없다',async()=>{
   await assertSucceeds(setDoc(doc(owner(),'users/owner/portfolios/pension-v2'),pensionProfileV2()));
   await assertSucceeds(setDoc(doc(owner(),'users/owner/portfolios/pension-v2/rebalances/one'),pensionRecordV2()));

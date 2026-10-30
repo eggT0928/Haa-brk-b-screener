@@ -67,3 +67,18 @@ it('현재 비중·목표 대비 차이와 금·예수금을 매매안 오류와
   expect(screen.getByRole('alert').textContent).toContain('총자산을 초과');
   expect(within(table.getByRole('row',{name:/금 ETF 합계/})).getByText('-10.00%p')).toBeTruthy();
 });
+
+it('기존 총자산보다 평가액이 큰 손실 상태에서도 조절안과 0원 가정을 표시하고 예수금을 저장한다',async()=>{
+  const p={...defaultPensionProfile(),totalBalance:500000,principal:1500000};p.holdings['379800']=100;
+  fixture.docs.set('users/owner/portfolios/pension-v2',p);const view=show();
+  expect(screen.getByText(/예수금을 0원으로 가정/)).toBeTruthy();
+  expect(screen.getByText('-₩500,000')).toBeTruthy();
+  expect(screen.getByRole('button',{name:'연금 계산안 저장'})).toBeTruthy();
+  fireEvent.change(screen.getByLabelText('연금 예수금 (원)'),{target:{value:'200000'}});
+  expect(screen.queryByText(/예수금을 0원으로 가정/)).toBeNull();expect(screen.getByText('-₩300,000')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button',{name:'연금 보유수량·설정 저장'}));
+  await waitFor(()=>expect(fixture.write).toHaveBeenCalledTimes(1));
+  expect(fixture.write.mock.calls[0][1].cashBalance).toBe(200000);
+  expect(fixture.write.mock.calls[0][1].totalBalance).toBe(500000);
+  view.unmount();show();expect((screen.getByLabelText('연금 예수금 (원)') as HTMLInputElement).value).toBe('200000');
+});

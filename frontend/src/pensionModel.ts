@@ -19,7 +19,7 @@ export const PENSION_ASSETS = [
   {code:'469830',name:'SOL 초단기채권액티브',group:'현금성 자산',weight:0.04},
 ] as const;
 export const PENSION_CODES=PENSION_ASSETS.map(a=>a.code);
-export type PensionProfile={strategy:'magic-pension-v2';currency:'KRW';totalBalance:number;principal:number;goldTargetWeight:number;holdings:Record<string,number>;weights:Record<string,number>;targetOverrides:Record<string,number|null>};
+export type PensionProfile={strategy:'magic-pension-v2';currency:'KRW';totalBalance:number;principal:number;cashBalance?:number;goldTargetWeight:number;holdings:Record<string,number>;weights:Record<string,number>;targetOverrides:Record<string,number|null>};
 export type PensionMarket=Market & {source?:string;currency:'KRW';quoteMode:'intraday'|'close';marketDate:string};
 export type PensionLine={ticker:string;held:number;price:number;target:number;trade:number};
 // 저장 이력은 PENSION_CODES 순서 [held,price,target] × 12의 숫자 배열. 화면에서 행으로 복원한다.
@@ -31,6 +31,7 @@ function fixedMap(value:unknown){return !!value&&typeof value==='object'&&!Array
 export function validatePensionProfile(p:PensionProfile){
   if(!p||p.strategy!=='magic-pension-v2'||p.currency!=='KRW')throw new Error('연금 포트폴리오 설정을 확인하세요.');
   for(const n of [p.totalBalance,p.principal])if(!Number.isFinite(n)||n<0||n>1e12)throw new Error('연금 총자산과 원금을 확인하세요.');
+  if(p.cashBalance!==undefined&&(!Number.isFinite(p.cashBalance)||p.cashBalance<0||p.cashBalance>1e12))throw new Error('연금 예수금을 확인하세요.');
   if(!fixedMap(p.holdings)||!fixedMap(p.weights)||!fixedMap(p.targetOverrides))throw new Error('연금 12개 종목의 입력을 확인하세요.');
   for(const c of PENSION_CODES){
     if(!Number.isInteger(p.holdings[c])||p.holdings[c]<0||p.holdings[c]>1e9)throw new Error(`${c} 보유수량은 0 이상의 정수로 입력하세요.`);
@@ -50,24 +51,35 @@ export function effectivePensionWeights(p:PensionProfile,m:PensionMarket|null) {
   GOLD_CODES.forEach((c,i)=>weights[c]=p.goldTargetWeight*(total>0?values[i]/total:fallback[i]));
   return weights;
 }
-// 보유 비중은 매매안 입력의 유효성과 별도로 계산한다. 총자산에는 예수금이 포함된다.
-export function pensionAllocation(p:PensionProfile,m:PensionMarket|null){
-  if(!m||m.currency!=='KRW'||!Number.isFinite(p.totalBalance)||p.totalBalance<=0||p.totalBalance>1e12)return null;
-  if(!fixedMap(p.holdings)||!fixedMap(p.weights))return null;
+// 기존 수동 총자산은 보존하고, 예수금을 입력하면 현재 시세로 총자산을 계산한다.
+export function pensionValuation(p:PensionProfile,m:PensionMarket){
+  if(!m||m.currency!=='KRW')throw new Error('원화 시세가 필요합니다.');
+  if(!Number.isFinite(p.totalBalance)||p.totalBalance<0||p.totalBalance>1e12||!fixedMap(p.holdings))throw new Error('연금 총자산과 보유수량을 확인하세요.');
+  if(p.cashBalance!==undefined&&(!Number.isFinite(p.cashBalance)||p.cashBalance<0||p.cashBalance>1e12))throw new Error('연금 예수금을 확인하세요.');
   const rows=PENSION_CODES.map(code=>{
     const held=p.holdings[code],price=m.prices?.[code],stamp=m.priceTimes?.[code];
-    if(!Number.isInteger(held)||held<0||held>1e9||!Number.isFinite(price)||price<=0||price>1e12||!stamp||!Number.isFinite(Date.parse(stamp)))return null;
-    const value=held*price;
-    return {code,held,value,currentWeight:value/p.totalBalance};
+    if(!Number.isInteger(held)||held<0||held>1e9)throw new Error(`${code} 보유수량은 0 이상의 정수로 입력하세요.`);
+    if(!Number.isFinite(price)||price<=0||price>1e12||!stamp||!Number.isFinite(Date.parse(stamp)))throw new Error(`${code}의 정상 가격·시각이 없어 계산할 수 없습니다. 시세를 갱신하세요.`);
+    return {code,held,price,value:held*price};
   });
-  if(rows.some(row=>row===null))return null;
-  const validRows=rows.filter((row):row is NonNullable<typeof row>=>row!==null);
-  const holdingsValue=validRows.reduce((sum,row)=>sum+row.value,0);
-  if(holdingsValue>p.totalBalance+.0001)return null;
-  const targetWeights=effectivePensionWeights(p,m);
-  const goldValue=validRows.filter(row=>GOLD_CODES.includes(row.code)).reduce((sum,row)=>sum+row.value,0);
-  return {rows:validRows, targetWeights, goldWeight:goldValue/p.totalBalance,
-    cash:Math.max(0,p.totalBalance-holdingsValue),cashWeight:Math.max(0,p.totalBalance-holdingsValue)/p.totalBalance};
+  const holdingsValue=rows.reduce((sum,row)=>sum+row.value,0);
+  const explicitCash=p.cashBalance!==undefined;
+  // 기존 입력이 시세 평가액보다 작으면 부족분을 부채나 손실로 간주하지 않는다.
+  const assumedCash=!explicitCash&&holdingsValue>p.totalBalance;
+  const cash=explicitCash?p.cashBalance!:Math.max(0,p.totalBalance-holdingsValue);
+  const equity=explicitCash?holdingsValue+cash:Math.max(p.totalBalance,holdingsValue);
+  if(!Number.isFinite(equity)||equity<=0||equity>1e12)throw new Error('총자산을 0 초과 1조 원 이하로 입력하세요.');
+  return {rows,holdingsValue,equity,cash,explicitCash,assumedCash};
+}
+// 보유 비중은 매매안 입력의 유효성과 별도로 계산한다.
+export function pensionAllocation(p:PensionProfile,m:PensionMarket|null){
+  if(!m||!fixedMap(p.weights))return null;
+  try{
+    const valuation=pensionValuation(p,m);
+    const rows=valuation.rows.map(row=>({...row,currentWeight:row.value/valuation.equity}));
+    const goldValue=rows.filter(row=>GOLD_CODES.includes(row.code)).reduce((sum,row)=>sum+row.value,0);
+    return {...valuation,rows,targetWeights:effectivePensionWeights(p,m),goldWeight:goldValue/valuation.equity,cashWeight:valuation.cash/valuation.equity};
+  }catch{return null;}
 }
 export function pensionDifference(current:number,target:number){
   if(!Number.isFinite(current)||!Number.isFinite(target)||target<0||target>1)return '—';
@@ -75,23 +87,19 @@ export function pensionDifference(current:number,target:number){
 }
 export function buildPensionPlan(p:PensionProfile,m:PensionMarket){
   validatePensionProfile(p);
-  if(p.totalBalance<=0)throw new Error('계산할 연금 총자산을 입력하세요.');
-  if(m.currency!=='KRW')throw new Error('원화 시세가 필요합니다.');
+  const valuation=pensionValuation(p,m);
+  const {equity}=valuation;
   const weights=effectivePensionWeights(p,m);
-  const lines=PENSION_CODES.map(ticker=>{
-    const price=m.prices[ticker],stamp=m.priceTimes[ticker];
-    if(!Number.isFinite(price)||price<=0||price>1e12||!stamp||!Number.isFinite(Date.parse(stamp)))throw new Error(`${ticker}의 정상 가격·시각이 없어 계산할 수 없습니다. 시세를 갱신하세요.`);
-    const calculated=p.totalBalance*weights[ticker]/price;
+  const lines=valuation.rows.map(({code:ticker,held,price})=>{
+    const calculated=equity*weights[ticker]/price;
     const target=p.targetOverrides[ticker]??Math.floor(calculated);
     if(!Number.isFinite(target)||target>1e9)throw new Error(`${ticker} 목표수량이 허용 범위를 넘었습니다.`);
-    return{ticker,price,held:p.holdings[ticker],target,trade:target-p.holdings[ticker],calculated,allocation:p.totalBalance*weights[ticker]};
+    return{ticker,price,held,target,trade:target-held,calculated,allocation:equity*weights[ticker]};
   });
   const targetValue=lines.reduce((s,l)=>s+l.target*l.price,0);
-  if(targetValue>p.totalBalance+.0001)throw new Error('직접 지정한 목표 보유수량의 합계가 총자산을 초과합니다. 수량이나 총자산을 조정하세요.');
-  const holdingsValue=lines.reduce((s,l)=>s+l.held*l.price,0);
-  if(holdingsValue>p.totalBalance+.0001)throw new Error('입력 총자산이 보유 ETF 평가액보다 작습니다. 평가금액과 예수금을 포함한 총액을 확인하세요.');
-  return{lines,weights,equity:p.totalBalance,holdingsValue,targetValue,remainingCash:Math.max(0,p.totalBalance-targetValue),
-    profit:p.principal>0?p.totalBalance-p.principal:null,profitRate:p.principal>0?p.totalBalance/p.principal-1:null,
+  if(targetValue>equity+.0001)throw new Error('직접 지정한 목표 보유수량의 합계가 총자산을 초과합니다. 수량이나 총자산을 조정하세요.');
+  return{lines,weights,...valuation,targetValue,remainingCash:Math.max(0,equity-targetValue),
+    profit:p.principal>0?equity-p.principal:null,profitRate:p.principal>0?equity/p.principal-1:null,
     oldestPriceAt:lines.map(l=>m.priceTimes[l.ticker]).sort((a,b)=>Date.parse(a)-Date.parse(b))[0]};
 }
 export function pensionCsv(plan:ReturnType<typeof buildPensionPlan>,p:PensionProfile){
