@@ -3,3 +3,5 @@
 @media(max-width:600px){.pension-totals{grid-template-columns:1fr;gap:16px}.pension-row label{font-size:11px}.pension-row input{padding:10px 6px}.pension-actions{width:100%}.pension-actions button{flex:1;min-width:135px}.portfolio-switch{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}.portfolio-switch button{padding:10px 7px;font-size:12px}.portfolio-switch button span{font-size:10px;line-height:1.5}.pension-inputs>.primary{width:100%}}
 
 .pension-allocation{margin-bottom:22px}.pension-allocation table small{color:var(--muted);font-weight:normal}.pension-gold-total{font-weight:600}
+
+.pension-plan-asset{min-width:175px;white-space:normal}.pension-plan-asset small{display:block;margin-top:4px;color:var(--muted);font-weight:normal}

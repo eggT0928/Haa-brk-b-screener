@@ -9,7 +9,7 @@ vi.mock('firebase/firestore',()=>({
   setDoc:async(p:string,d:unknown)=>{fixture.write(p,d);fixture.docs.set(p,d);},addDoc:fixture.add,
 }));
 import { PensionPortfolio } from './PensionPortfolio';
-import { defaultPensionProfile, PENSION_CODES } from './pensionModel';
+import { defaultPensionProfile, PENSION_ASSETS, PENSION_CODES } from './pensionModel';
 const now=Date.parse('2026-10-26T08:00:00Z');
 const market={currency:'KRW',quoteMode:'close',marketDate:'2026-10-26',updatedAt:new Date(now).toISOString(),prices:Object.fromEntries(PENSION_CODES.map(c=>[c,10000])),priceTimes:Object.fromEntries(PENSION_CODES.map(c=>[c,'2026-10-26T06:30:00Z']))};
 const show=()=>render(<PensionPortfolio user={{uid:'wife'} as User} ownerUid="owner" now={now}/>);
@@ -81,4 +81,14 @@ it('기존 총자산보다 평가액이 큰 손실 상태에서도 조절안과 
   expect(fixture.write.mock.calls[0][1].cashBalance).toBe(200000);
   expect(fixture.write.mock.calls[0][1].totalBalance).toBe(500000);
   view.unmount();show();expect((screen.getByLabelText('연금 예수금 (원)') as HTMLInputElement).value).toBe('200000');
+});
+
+it('리밸런싱 계산안에 12개 ETF의 이름과 코드가 함께 표시된다',()=>{
+  show();
+  const section=screen.getByRole('heading',{name:'연금 리밸런싱 계산안'}).closest('section')!;
+  for(const asset of PENSION_ASSETS){
+    const row=within(section).getByRole('row',{name:new RegExp(asset.code)});
+    expect(row.textContent).toContain(asset.name);
+    expect(row.textContent).toContain(asset.code);
+  }
 });
