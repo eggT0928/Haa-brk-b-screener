@@ -87,6 +87,7 @@ it('현근 통합 표에서 모든 종목의 시세와 입력 및 계산을 함�
   expect(spy.textContent).toContain('2 →');
   fireEvent.change(within(spy).getByLabelText('SPY 보유수량'),{target:{value:'-1'}});
   expect(screen.getByText(/SPY 보유수량을 확인하세요/)).toBeTruthy();
+  expect(screen.getByText(/장외·지연 시세 또는 직전 성공값/)).toBeTruthy();
   expect(within(region).getByLabelText('SPYM 보유수량')).toBeTruthy();
   fireEvent.change(within(spy).getByLabelText('SPY 보유수량'),{target:{value:'0'}});
   expect(screen.queryByText(/SPY 보유수량을 확인하세요/)).toBeNull();
