@@ -30,7 +30,7 @@ it('저장 데이터가 유효하지 않으면 초기값으로 덮어쓰지 않�
 });
 it('종가 계산안은 확인 후에만 별도 이력에 저장한다',async()=>{
   show();const save=screen.getByRole('button',{name:'연금 계산안 저장'}) as HTMLButtonElement;expect(save.disabled).toBe(true);
-  fireEvent.click(screen.getByRole('checkbox'));fireEvent.click(save);
+  fireEvent.click(screen.getByLabelText('연금 계산안이 종가·지연 또는 직전 성공 시세 기준임을 확인했습니다.'));fireEvent.click(save);
   await waitFor(()=>expect(fixture.add).toHaveBeenCalledTimes(1));expect(fixture.add.mock.calls[0][0]).toBe('users/owner/portfolios/pension-v2/rebalances');
   expect(fixture.add.mock.calls[0][1]).toMatchObject({currency:'KRW',month:'2026-10',equity:1000000});expect(fixture.add.mock.calls[0][1].lines.slice(0,3)).toEqual([0,10000,12]);expect(fixture.write).not.toHaveBeenCalled();
 });
@@ -91,4 +91,31 @@ it('리밸런싱 계산안에 12개 ETF의 이름과 코드가 함께 표시된�
     expect(row.textContent).toContain(asset.name);
     expect(row.textContent).toContain(asset.code);
   }
+});
+
+it('소수점 계산을 확인하고 올림·버림을 선택하면 예수금과 저장 목표가 갱신된다',async()=>{
+  show();
+  const section=screen.getByRole('heading',{name:'연금 리밸런싱 계산안'}).closest('section')!;
+  const cash=()=>within(section).getByText('리밸런싱 후 예상 예수금').parentElement!.textContent;
+  const toggle=within(section).getByRole('checkbox',{name:'소수점 계산값과 올림·버림 선택 보기'});
+  expect(cash()).toContain('₩10,000');
+  expect(within(section).queryByRole('button',{name:'0072R0 올림 8주'})).toBeNull();
+  fireEvent.click(toggle);
+  const goldRow=within(section).getByRole('row',{name:/0072R0/});
+  expect(goldRow.textContent).toContain('7.6949');
+  fireEvent.click(within(section).getByRole('button',{name:'0072R0 올림 8주'}));
+  expect(cash()).toContain('₩0');
+  const upper=within(section).getByRole('button',{name:'411060 올림 13주'}) as HTMLButtonElement;
+  expect(upper.disabled).toBe(true);expect(within(section).getByText('올림 시 ₩10,000 부족')).toBeTruthy();
+  fireEvent.click(within(section).getByRole('button',{name:'0072R0 버림 7주'}));
+  expect(cash()).toContain('₩10,000');
+  expect((within(section).getByRole('button',{name:'411060 올림 13주'}) as HTMLButtonElement).disabled).toBe(false);
+  fireEvent.click(within(section).getByRole('button',{name:'411060 올림 13주'}));
+  fireEvent.click(within(section).getByRole('button',{name:'목표수량·설정 저장'}));
+  await waitFor(()=>expect(fixture.write).toHaveBeenCalledTimes(1));
+  expect(fixture.write.mock.calls[0][1].targetOverrides['0072R0']).toBe(7);
+  expect(fixture.write.mock.calls[0][1].targetOverrides['411060']).toBe(13);
+  expect(cash()).toContain('₩0');
+  fireEvent.click(within(section).getByRole('button',{name:'411060 자동 계산'}));
+  expect(cash()).toContain('₩10,000');
 });
