@@ -14,7 +14,7 @@ def refresh(store, provider, now, job="intraday"):
     now = utc(now)
     if job == "intraday" and not is_open(now):
         return "closed"
-    run_key = f"{job}:{now.floor('15min').isoformat()}"
+    run_key = f"{job}:{now.floor('10min').isoformat()}"
     token = store.acquire(run_key, now)
     if token is None:
         return "duplicate"

@@ -116,13 +116,23 @@ def test_cache_preserves_spym_and_irx():
     np.testing.assert_allclose(irx.to_numpy(), rates.to_numpy())
 
 
-def test_manual_cache_ten_minutes_then_refresh():
+def test_manual_cache_reuses_recent_but_refreshes_after_nine_minutes():
     store, provider = ManualStore(), FakeSujin()
     now = pd.Timestamp("2026-08-28T15:00:00Z")
     assert refresh_quotes(store, provider, now)["source"] == "refreshed"
     assert refresh_quotes(store, provider, now + pd.Timedelta(minutes=5))["source"] == "cache"
     assert provider.quote_calls == 1
-    assert refresh_quotes(store, provider, now + pd.Timedelta(minutes=15))["source"] == "refreshed"
+    # 다음 10분 작업이 직전 작업보다 몇 초 빨라도 새 시세를 조회한다.
+    assert refresh_quotes(store, provider, now + pd.Timedelta(minutes=9, seconds=55))["source"] == "refreshed"
+
+
+def test_scheduled_quote_refresh_is_not_skipped_after_manual_refresh():
+    store, provider = ManualStore(), FakeSujin()
+    now = pd.Timestamp("2026-08-28T15:02:00Z")
+    assert refresh_quotes(store, provider, now)["source"] == "refreshed"
+    assert refresh_with_haa(store, FakeMarket(), provider, now + pd.Timedelta(minutes=8), "intraday") == "updated"
+    assert provider.quote_calls == 2
+    assert store.get("market/sujin")["updatedAt"] == (now + pd.Timedelta(minutes=8)).isoformat()
 
 
 def test_failure_preserves_old_timestamp_and_haa_documents():
@@ -157,6 +167,19 @@ def test_shared_refresh_commits_haa_even_when_sujin_fails():
     assert store.get("status/daily")["ok"] is True
     assert store.get("status/sujinQuotes")["ok"] is False
     assert provider.base == store.get("market/current")
+
+
+def test_sujin_refreshes_even_when_haa_fails_and_haa_failure_is_propagated(monkeypatch):
+    store, haa, provider = ManualStore(), FakeMarket(), FakeSujin()
+    def fail(*args, **kwargs):
+        raise RuntimeError("HAA Yahoo 오류")
+    monkeypatch.setattr(haa, "daily", fail)
+    with pytest.raises(RuntimeError, match="HAA Yahoo 오류"):
+        refresh_with_haa(store, haa, provider, "2026-08-28T15:00:00Z", "intraday")
+    assert provider.quote_calls == 1
+    assert store.get("status/sujinQuotes")["ok"] is True
+    assert store.get("status/intraday")["ok"] is False
+    assert store.get("market/current") is None
 
 
 def test_closed_or_duplicate_haa_does_not_start_extra_queries():

@@ -37,13 +37,13 @@ def unpack(blob):
     return monthly, rates.IRX
 
 
-def recent_quotes(cached, now):
+def recent_quotes(cached, now, max_age=540):
     if not cached:
         return False
     try:
         stamps = [utc(cached["priceTimes"][t]) for t in TICKERS]
         if is_open(now):
-            return 0 <= (now - utc(cached["updatedAt"])).total_seconds() < 600 and all(
+            return 0 <= (now - utc(cached["updatedAt"])).total_seconds() < max_age and all(
                 -60 <= (now - stamp).total_seconds() <= 1500 for stamp in stamps
             )
         day = latest_closed_session(now)
@@ -53,13 +53,15 @@ def recent_quotes(cached, now):
         return False
 
 
-def refresh_cached(store, provider, now, kind):
+def refresh_cached(store, provider, now, kind, *, scheduled=False):
     now = utc(now)
     quotes = kind == "quotes"
     path = "market/sujin" if quotes else "internal/sujinHistory"
     cached = store.get(path)
     fresh = (
-        recent_quotes(cached, now)
+        # 수동 조회 직후의 중복만 방지한다. 예약된 시세는 수동 캐시 때문에
+        # 한 주기를 건너뛰지 않도록 일반 조회보다 짧게 재사용한다.
+        recent_quotes(cached, now, max_age=60 if scheduled else 540)
         if quotes
         else bool(
             cached
@@ -116,8 +118,8 @@ def refresh_cached(store, provider, now, kind):
         store.release_manual(gate, token)
 
 
-def refresh_quotes(store, provider, now):
-    cached, source, message = refresh_cached(store, provider, now, "quotes")
+def refresh_quotes(store, provider, now, *, scheduled=False):
+    cached, source, message = refresh_cached(store, provider, now, "quotes", scheduled=scheduled)
     return {"market": cached, "source": source, "message": message}
 
 
@@ -135,12 +137,21 @@ def run_backtest(store, provider, now, start=None, end=None, initial=10000.0):
 def refresh_with_haa(store, haa_provider, sujin_provider, now, job):
     from haa.service import refresh
 
-    outcome = refresh(store, haa_provider, now, job)
+    try:
+        outcome = refresh(store, haa_provider, now, job)
+    except Exception:
+        # HAA 조회가 실패해도 수진 종목은 독립적으로 시도한다. HAA 예외는
+        # 다시 전달하여 예약 작업의 기존 재시도 동작과 실패 표시를 유지한다.
+        try:
+            refresh_quotes(store, sujin_provider, utc(now), scheduled=True)
+        except Exception:
+            logger.exception("HAA와 수진 시세 갱신이 모두 실패했습니다.")
+        raise
     if outcome != "updated":
         return outcome
     # HAA의 성공 발행은 이미 완료됐다. 수진 전용 조회 실패가 이를 되돌리거나 재실행하지 않는다.
     try:
-        refresh_quotes(store, sujin_provider, now)
+        refresh_quotes(store, sujin_provider, now, scheduled=True)
     except Exception:
         logger.exception("HAA 갱신 성공. 수진 추가 갱신만 실패하여 다음 실행에서 재시도합니다.")
     return outcome

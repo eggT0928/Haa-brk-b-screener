@@ -115,6 +115,13 @@ def test_duplicate_job_and_market_closed_skip_provider(monkeypatch):
     assert refresh(store, provider, "2026-08-29T15:00:00Z") == "closed"
 
 
+def test_ten_minute_slots_are_distinct_but_same_slot_is_deduplicated():
+    store, provider = MemoryStore(), FakeMarket()
+    for minute in (30, 40, 50):
+        assert refresh(store, provider, f"2026-08-28T13:{minute}:00Z") == "updated"
+    assert refresh(store, provider, "2026-08-28T13:50:30Z") == "duplicate"
+
+
 def test_roundtrip_compressed_cache_and_raw_irx_preserved():
     source = FakeMarket()
     blob = pack(source.adjusted, source.raw)

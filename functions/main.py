@@ -37,14 +37,14 @@ def store():
 
 
 @scheduler_fn.on_schedule(
-    schedule="*/15 9-15 * * 1-5",
+    schedule="*/10 9-15 * * 1-5",
     timezone="America/New_York",
     timeout_sec=480,
     retry_count=1,
     min_backoff_seconds=60,
 )
 def refresh_intraday(event: scheduler_fn.ScheduledEvent) -> None:
-    # 09:00/09:15와 휴장일은 달력 검사 후 Yahoo에 접속하지 않고 종료한다.
+    # 09:00~09:20과 휴장일은 달력 검사 후 Yahoo에 접속하지 않고 종료한다.
     refresh_with_haa(store(), YahooMarket(), SujinMarket(), pd.Timestamp.now(tz="UTC"), "intraday")
 
 
