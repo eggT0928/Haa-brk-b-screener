@@ -15,6 +15,12 @@ import { TICKERS, type Backtest, type Market, type Profile, type Rebalance, type
 
 const explainError = (e: unknown) => e instanceof Error ? e.message : '요청 처리에 실패했습니다.';
 const weightsLabel = (w: Record<string, number>) => Object.entries(w).map(([t,n]) => `${t === 'CASH' ? '현금' : t} ${(n * 100).toFixed(0)}%`).join(' · ');
+// 표는 소수 둘째 자리까지만 표시하되 실제 계산·보유 입력값은 반올림하지 않는다.
+const haaQuantityLabel = (n: number) => {
+  if (n !== 0 && Math.abs(n) < 0.005) return n < 0 ? '-<0.01' : '<0.01';
+  return new Intl.NumberFormat('ko-KR', {useGrouping:false, maximumFractionDigits:2}).format(n);
+};
+const haaTradeLabel = (n: number) => `${n>0?'+':''}${haaQuantityLabel(n)}`;
 
 function SignalCard({ signal, expected }: { signal: Signal | null; expected?: boolean }) {
   return <section className={`signal-card ${expected ? 'preview' : ''}`}>
@@ -190,10 +196,11 @@ export default function App() {
             <fieldset className="family-fields" disabled={!profileReady||saving}>
               <div className="haa-sheet-controls">
                 <label>실전 S&P500 ETF<select value={profile.sp500} onChange={e=>edit({sp500:e.target.value as Profile['sp500']})}><option>SPY</option><option>SPYM</option></select></label>
-                <label>HAA 수량 단위<select value={profile.quantityMode??'whole'} onChange={e=>edit({quantityMode:e.target.value as Profile['quantityMode']})}><option value="whole">정수 · 1주 단위</option><option value="fractional">소수점 · 0.000001주 단위</option></select></label>
+                <label>HAA 수량 단위<select value={profile.quantityMode??'whole'} onChange={e=>edit({quantityMode:e.target.value as Profile['quantityMode']})}><option value="whole">정수 · 1주 단위</option><option value="fractional">소수점 · 0.000001주 단위 계산</option></select></label>
                 <label>현금 잔액 (USD)<input type="number" min="0" max="1000000000000" step="0.01" value={Number.isNaN(profile.cash)?'':profile.cash} onChange={e=>edit({cash:e.target.valueAsNumber})}/></label>
               </div>
               <p className="micro">선택 ETF는 실행 수량에만 반영합니다. 모멘텀과 백테스트는 항상 SPY입니다. 목표수량은 선택 단위로 내림하며 실제 주문 단위는 증권사에서 확인하세요.</p>
+              <p className="micro">표의 수량은 소수 둘째 자리까지 반올림한 참고값입니다. 매매금액과 예상 현금은 정확한 계산 수량을 기준으로 하며, 아래에서 정확한 수량을 확인할 수 있습니다.</p>
               {plan && <div className="balance"><span>현재 평가금액</span><strong>{money(plan.equity)}</strong><small>{profile.quantityMode==='fractional'?'소수점':'정수'} 목표수량 적용 후 예상 현금 {money(plan.remainingCash)}</small></div>}
               {planError && <p className="error">{planError}</p>}
               {!plan && !planError && <p className="micro">확정 신호와 가격이 준비되면 리밸런싱 계산안이 표시됩니다. 보유수량은 미리 입력할 수 있습니다.</p>}
@@ -204,11 +211,12 @@ export default function App() {
                   <th scope="row">{t}</th><td>{percent(current)}</td><td>{plan?percent(weight):'—'}</td><td>{plan?percentagePoint(current===null?null:current-weight):'—'}</td>
                   <td title={market?.priceTimes[t]?timeLabel(market.priceTimes[t]):undefined}>{validPrice?money(price):'—'}</td><td>{validPrice&&validHeld?money(held*price):'—'}</td>
                   <td><input aria-label={`${t} 보유수량`} type="number" min="0" max="1000000000" step="any" value={Number.isNaN(held)?'':held} onChange={e=>edit({holdings:{...profile.holdings,[t]:e.target.valueAsNumber}})}/></td>
-                  <td>{plan?`${quantityLabel(held)} → ${quantityLabel(l?.target??0)}`:'—'}</td><td className={l?.trade&&l.trade<0?'negative':'positive'}>{plan?`${l?.trade&&l.trade>0?'+':''}${quantityLabel(l?.trade??0)}`:'—'}</td><td>{plan?money(l?.amount??0):'—'}</td>
+                  <td title={plan?`정확 수량: 보유 ${quantityLabel(held)}주 → 목표 ${quantityLabel(l?.target??0)}주`:undefined}>{plan?`${haaQuantityLabel(held)} → ${haaQuantityLabel(l?.target??0)}`:'—'}</td><td title={plan?`정확 매매 수량: ${quantityLabel(l?.trade??0)}주`:undefined} className={l?.trade&&l.trade<0?'negative':'positive'}>{plan?haaTradeLabel(l?.trade??0):'—'}</td><td>{plan?money(l?.amount??0):'—'}</td>
                 </tr>;})}
                 <tr className="haa-cash-row"><th scope="row">현금</th><td>{percent(plan&&plan.equity>0?profile.cash/plan.equity:null)}</td><td>{plan?percent(confirmed?.weights.CASH??0):'—'}</td><td>{plan?percentagePoint(plan.equity>0?profile.cash/plan.equity-(confirmed?.weights.CASH??0):null):'—'}</td><td>—</td><td>{Number.isFinite(profile.cash)?money(profile.cash):'—'}</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
               </tbody></table></div>
             </fieldset>
+            {plan&&<details><summary>계산에 사용된 정확한 수량 보기</summary><p className="micro">아래 수량은 반올림하지 않은 계산값이며 저장되는 이력에도 그대로 반영됩니다.</p><div className="table-scroll"><table><thead><tr><th>종목</th><th>보유 수량</th><th>목표 수량</th><th>매매 수량</th></tr></thead><tbody>{plan.lines.map(l=><tr key={l.ticker}><th scope="row">{l.ticker}</th><td>{quantityLabel(l.held)}</td><td>{quantityLabel(l.target)}</td><td>{l.trade>0?'+':''}{quantityLabel(l.trade)}</td></tr>)}</tbody></table></div></details>}
             {!profileReady&&<p className="micro">기존 보유수량을 불러오는 중입니다. 확인 전에는 저장할 수 없습니다.</p>}
             <p className="micro">현재 비중은 현금을 포함한 현재 평가금액 기준입니다. 차이는 현재 비중에서 확정 신호의 목표 비중을 뺀 값입니다.</p>
             <p className="micro">매도 후 매수하는 계산입니다. 수수료·세금·환전·호가 차이는 제외하며, 보유자산은 자동 변경하지 않습니다. 가격 셀에 마우스를 올리면 시세 시각을 확인할 수 있습니다.</p>
@@ -225,7 +233,7 @@ export default function App() {
           <p className="micro">월말 신호는 다음 달 수익에 적용합니다. 수정주가의 배당·분할을 반영하며 수수료·슬리피지·세금은 제외합니다. 낙폭은 월말 관측 기준입니다. 샤프는 기존 방식인 (CAGR − 선택 기간 ^IRX 평균) / 연환산 변동성입니다. 과거 성과는 미래 수익을 보장하지 않습니다.</p>
         </section>}
         {tab === 'history' && <div className="history-grid"><section className="panel"><h2>월말 확정 신호</h2><p className="micro">운영 시작 이후 저장한 확정본 · 최근 24건 · 신호 기준 티커 표시</p>{history.length?<div className="table-scroll"><table><thead><tr><th>신호 월</th><th>상태</th><th>목표 자산</th></tr></thead><tbody>{history.map(h=><tr key={h.month}><td>{h.month}</td><td>{h.regime}</td><td>{weightsLabel(h.weights)}</td></tr>)}</tbody></table></div>:<p className="empty">저장된 확정 이력이 없습니다.</p>}</section>
-          <section className="panel"><h2>나의 리밸런싱 계산안</h2><p className="micro">최근 24건. 저장은 주문 체결을 의미하지 않습니다.</p>{rebalances.length?rebalances.map(r=><details key={r.id}><summary>{r.signalMonth} · {r.sp500} · {r.quantityMode==='fractional'?'소수점':'정수'} · {money(r.equity)} · {r.kind}</summary><div className="table-scroll"><table><thead><tr><th>종목</th><th>목표</th><th>매매</th><th>사용 가격</th></tr></thead><tbody>{r.lines.map(l=><tr key={l.ticker}><td>{l.ticker}</td><td>{quantityLabel(l.target)}</td><td>{quantityLabel(l.trade)}</td><td>{money(l.price)}</td></tr>)}</tbody></table></div></details>):<p className="empty">아직 저장한 계산안이 없습니다.</p>}</section></div>}
+          <section className="panel"><h2>나의 리밸런싱 계산안</h2><p className="micro">최근 24건. 저장은 주문 체결을 의미하지 않습니다. 표의 수량은 소수 둘째 자리까지 표시합니다.</p>{rebalances.length?rebalances.map(r=><details key={r.id}><summary>{r.signalMonth} · {r.sp500} · {r.quantityMode==='fractional'?'소수점':'정수'} · {money(r.equity)} · {r.kind}</summary><div className="table-scroll"><table><thead><tr><th>종목</th><th>목표</th><th>매매</th><th>사용 가격</th></tr></thead><tbody>{r.lines.map(l=><tr key={l.ticker}><td>{l.ticker}</td><td title={`정확 목표 수량: ${quantityLabel(l.target)}주`}>{haaQuantityLabel(l.target)}</td><td title={`정확 매매 수량: ${quantityLabel(l.trade)}주`}>{haaTradeLabel(l.trade)}</td><td>{money(l.price)}</td></tr>)}</tbody></table></div><details><summary>저장된 정확한 수량 보기</summary><div className="table-scroll"><table><thead><tr><th>종목</th><th>목표 수량</th><th>매매 수량</th></tr></thead><tbody>{r.lines.map(l=><tr key={l.ticker}><th scope="row">{l.ticker}</th><td>{quantityLabel(l.target)}</td><td>{l.trade>0?'+':''}{quantityLabel(l.trade)}</td></tr>)}</tbody></table></div></details></details>):<p className="empty">아직 저장한 계산안이 없습니다.</p>}</section></div>}
         </div>
         {sujinVisited&&<div hidden={portfolioOwner!=='sujin'}><SujinPortfolio key={`${user?.uid}:${dataOwnerUid}`} user={user} ownerUid={dataOwnerUid} now={now} renderBacktest={data=><BacktestView result={data}/>}/></div>}
         {pensionVisited&&<div hidden={portfolioOwner!=='pension'}><PensionPortfolio key={`${user?.uid}:${dataOwnerUid}`} user={user} ownerUid={dataOwnerUid} now={now}/></div>}
