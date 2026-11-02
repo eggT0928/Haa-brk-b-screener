@@ -75,3 +75,19 @@ it('현금 포함 현재 비중과 SPY·SPYM 각각의 목표 차이를 표시�
   fireEvent.change(screen.getByLabelText('SPY 보유수량'),{target:{value:'0'}});
   expect(within(spym).getAllByText('—')).toHaveLength(2);
 });
+
+it('현근 통합 표에서 모든 종목의 시세와 입력 및 계산을 함께 확인하고 오류를 고칠 수 있다',()=>{
+  render(<App/>);
+  const region=screen.getByRole('region',{name:'현근 종목별 표 가로 스크롤'});
+  const spy=within(region).getByRole('rowheader',{name:'SPY'}).closest('tr')!;
+  expect(within(spy).getByRole('spinbutton',{name:'SPY 보유수량'})).toBeTruthy();
+  expect(within(spy).getByText('US$600.00')).toBeTruthy();
+  expect(within(region).getByRole('rowheader',{name:'SPYM'})).toBeTruthy();
+  fireEvent.change(within(spy).getByLabelText('SPY 보유수량'),{target:{value:'2'}});
+  expect(spy.textContent).toContain('2 →');
+  fireEvent.change(within(spy).getByLabelText('SPY 보유수량'),{target:{value:'-1'}});
+  expect(screen.getByText(/SPY 보유수량을 확인하세요/)).toBeTruthy();
+  expect(within(region).getByLabelText('SPYM 보유수량')).toBeTruthy();
+  fireEvent.change(within(spy).getByLabelText('SPY 보유수량'),{target:{value:'0'}});
+  expect(screen.queryByText(/SPY 보유수량을 확인하세요/)).toBeNull();
+});

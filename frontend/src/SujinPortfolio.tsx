@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 import type { User } from 'firebase/auth';
 import { addDoc, collection, doc, limit, onSnapshot, orderBy, query, serverTimestamp, setDoc } from 'firebase/firestore';
 import { apiHeaders, db, demo } from './firebase';
-import { money, percent, percentagePoint, timeLabel } from './portfolio';
+import { money, percent, percentagePoint, quantityLabel, timeLabel } from './portfolio';
 import { buildSujinComparison, buildSujinPlan, defaultSujinProfile, SUJIN_TICKERS, SUJIN_WEIGHTS, sujinCsv, validateSujinProfile, type SujinProfile, type SujinRecord } from './sujinModel';
 import type { Backtest, Market, UpdateStatus } from './types';
 import './sujin.css';
@@ -132,40 +132,51 @@ export function SujinPortfolio({ user, ownerUid=user?.uid, now, renderBacktest }
     {status?.ok===false&&<p className="notice">수진 시세 갱신에 실패해 직전 성공값을 유지합니다. 현근 HAA 상태와는 별개입니다.</p>}
     <nav aria-label="수진 포트폴리오 메뉴">{[['overview','리밸런싱'],['backtest','장기 백테스트'],['history','저장 이력']].map(([id,label])=><button key={id} className={tab===id?'active':''} onClick={()=>setTab(id)}>{label}</button>)}</nav>
     {tab==='overview'&&<>
-      <section className="panel sujin-target"><div className="section-title"><h2>매월 유지할 목표 비중</h2><span>모멘텀 신호 없음 · 월말 리밸런싱</span></div>
-        <div className="sujin-weights">{Object.entries(SUJIN_WEIGHTS).map(([ticker,weight])=><div key={ticker}><strong>{ticker}</strong><span>{percent(weight)}</span></div>)}</div>
-        <p className="micro">SPY와 SPYM 합산 20%. 기존 SPY는 매수·매도 없이 유지하고 SPYM으로 조정합니다.</p></section>
-      <div className="workspace-grid">
-        <section className="panel"><div className="section-title"><h2>수진 보유자산</h2><span>USD 기준 · 현근과 분리</span></div>
-          {!profileReady&&<p className="notice">수진 저장 데이터를 불러오는 중입니다. 연결 확인 전에는 저장할 수 없습니다.</p>}
-          <fieldset disabled={!profileReady||!!busy} className="sujin-fields">
+      <section className="panel sujin-sheet" aria-label="수진 리밸런싱 통합 표">
+        <div className="section-title"><h2>수진 보유자산과 리밸런싱</h2><span>USD 기준 · 현재 가격 기준 · 주문 아님</span></div>
+        {!profileReady&&<p className="notice">수진 저장 데이터를 불러오는 중입니다. 연결 확인 전에는 수정·저장할 수 없습니다.</p>}
+        <fieldset disabled={!profileReady||!!busy} className="sujin-fields">
+          <div className="sujin-summary-inputs">
             <label>총자산 기준<select value={profile.totalMode} onChange={e=>edit({totalMode:e.target.value as SujinProfile['totalMode']})}><option value="manual">총자산 직접 입력 · 기존 방식</option><option value="holdings">보유주식 평가액 + 현금</option></select></label>
             {profile.totalMode==='manual'?<label>총자산 · 평가금액 + 예수금 (USD)<input type="number" min="0" max="1000000000000" step="0.01" value={Number.isNaN(profile.totalBalance)?'':profile.totalBalance} onChange={e=>edit({totalBalance:e.target.valueAsNumber})}/></label>
               :<label>현금 잔액 (USD)<input type="number" min="0" max="1000000000000" step="0.01" value={Number.isNaN(profile.cash)?'':profile.cash} onChange={e=>edit({cash:e.target.valueAsNumber})}/></label>}
             <label>매수 목표 수량 단위<select value={profile.quantityMode} onChange={e=>edit({quantityMode:e.target.value as SujinProfile['quantityMode']})}><option value="fractional">소수점 0.01주</option><option value="whole">정수 1주</option></select></label>
-            <div className="holdings-grid">{SUJIN_TICKERS.map(t=><label key={t}>{t}<input aria-label={`수진 ${t} 보유수량`} type="number" min="0" max="1000000000" step="any" value={Number.isNaN(profile.holdings[t])?'':profile.holdings[t]} onChange={e=>edit({holdings:{...profile.holdings,[t]:e.target.valueAsNumber}})}/></label>)}</div>
-            <p className="micro">목표 수량은 선택한 단위로 내림합니다. SPY는 소수점 보유량도 그대로 유지하며 다른 종목의 기존 소수점 잔량 매도는 발생할 수 있습니다.</p>
-          </fieldset>
-          <button className="primary full" disabled={!!busy||demo||!profileReady} onClick={saveProfile}>수진 보유수량·설정 저장</button>
-        </section>
-        <section className="panel"><div className="section-title"><h2>수진 리밸런싱 계산안</h2><span>현재 가격 기준 · 주문 아님</span></div>
-          {!market&&<p className="empty">아직 수진 시세가 없습니다. 자동 갱신을 기다리거나 ‘시세 수동 갱신’을 눌러 주세요.</p>}
+          </div>
+          {comparison&&<div className="sujin-summary-metrics"><div><span>계산 기준 총자산</span><strong>{money(comparison.equity)}</strong></div><div><span>보유 주식 평가액</span><strong>{money(comparison.holdingsValue)}</strong></div><div><span>리밸런싱 후 예상 현금</span><strong>{plan?money(plan.remainingCash):'—'}</strong></div></div>}
+          {!market&&<p className="empty">아직 수진 시세가 없습니다. 자동 갱신을 기다리거나 ‘시세 수동 갱신’을 눌러 주세요. 보유수량은 먼저 입력할 수 있습니다.</p>}
           {planError&&<p className="notice">{planError}</p>}
-          {plan&&<>
-            <div className="balance"><span>계산 기준 총자산</span><strong>{money(plan.equity)}</strong><small>리밸런싱 후 예상 현금 {money(plan.remainingCash)}</small></div>
-            <p className="micro">가장 오래된 사용 시세 {timeLabel(plan.oldestPriceAt)}</p>
-            {stale&&<p className="notice">장외·지연 시세 또는 직전 성공값입니다. 주문 전 증권사 가격을 확인하세요.</p>}
-            <div className="table-scroll"><table><thead><tr><th>종목</th><th>보유 → 목표</th><th>매매 수량</th><th>가격 USD</th></tr></thead><tbody>{plan.lines.map(l=><tr key={l.ticker}><th>{l.ticker}{l.ticker==='SPY'?' · 유지':''}</th><td>{l.held} → {l.target}</td><td className={l.trade<0?'negative':'positive'}>{l.trade>0?'+':''}{l.trade}</td><td title={timeLabel(market?.priceTimes[l.ticker])}>{money(l.price)}</td></tr>)}</tbody></table></div>
-            <p className="micro">매도 후 매수하는 계산입니다. 수수료·세금·체결가격 차이는 제외합니다. 입력 총자산에는 예수금과 추가 투입할 금액이 포함되어야 합니다.</p>
-            {stale&&<label className="check"><input type="checkbox" checked={acknowledged} onChange={e=>setAcknowledged(e.target.checked)}/>수진 계산안이 지연 또는 직전 성공 시세 기준임을 확인했습니다.</label>}
-            <div className="sujin-actions"><button disabled={!!busy||demo||(stale&&!acknowledged)} onClick={savePlan}>수진 계산안 저장 · 주문 아님</button><button onClick={downloadCsv}>CSV 다운로드</button></div>
-          </>}
-        </section>
-      </div>
-      {profileReady&&<section className="panel sujin-comparison"><div className="section-title"><h2>현재 비중과 목표의 차이</h2><span>총자산·예수금 포함 기준</span></div>
-        <div className="table-scroll"><table><thead><tr><th>자산군</th><th>현재</th><th>목표</th><th>차이 (%p)</th></tr></thead><tbody>{[...comparisonGroups].sort((a,b)=>Math.abs(b.deviation??0)-Math.abs(a.deviation??0)).map(g=><tr key={g.ticker}><th scope="row">{g.ticker}</th><td>{percent(g.current)}</td><td>{percent(g.weight)}</td><td className={(g.deviation??0)<0?'negative':'positive'}>{percentagePoint(g.deviation)}</td></tr>)}<tr><th scope="row">현금·예수금</th><td>{percent(cashWeight)}</td><td>0.00%</td><td>{percentagePoint(cashWeight)}</td></tr></tbody></table></div>
-        <p className="micro">차이는 현재 비중 − 목표 비중입니다. 시세 또는 총자산이 없으면 현재 비중을 —로 표시합니다. 직접 입력한 총자산에는 예수금과 추가 투입 금액이 포함됩니다.</p>
-      </section>}
+          {market&&stale&&<p className="notice">장외·지연 시세 또는 직전 성공값입니다. 주문 전 증권사 가격을 확인하세요.</p>}
+          <p className="micro sujin-sheet-hint">종목별 입력과 계산 결과를 한 줄에서 확인하세요. 표를 좌우로 밀어 모든 항목을 볼 수 있습니다.</p>
+          <div className="table-scroll sujin-sheet-scroll" tabIndex={0} aria-label="수진 종목별 표 가로 스크롤"><table className="sujin-sheet-table"><thead><tr><th scope="col">종목</th><th scope="col">목표 비중</th><th scope="col">목표 배분액</th><th scope="col">현재 가격</th><th scope="col">보유 수량 입력</th><th scope="col">현재 평가액</th><th scope="col">현재 비중</th><th scope="col">목표 차이</th><th scope="col">목표 수량</th><th scope="col">매매 수량</th><th scope="col">조정 후 평가액</th><th scope="col">조정 후 비중</th></tr></thead><tbody>
+            {SUJIN_TICKERS.map(t=>{
+              const line=plan?.lines.find(l=>l.ticker===t), price=market?.prices[t], held=profile.holdings[t];
+              const valid=Number.isFinite(price)&&price!>0&&Number.isFinite(held)&&held>=0;
+              const value=valid?price!*held:null, current=value!==null&&comparison?value/comparison.equity:null;
+              const combined=t==='SPY'||t==='SPYM';
+              const weight=combined?null:SUJIN_WEIGHTS[t];
+              const deviation=current!==null&&weight!==null?current-weight:null;
+              const finalValue=line?line.target*line.price:null;
+              const group=comparisonGroups.find(g=>g.ticker==='SPY+SPYM')!;
+              const spyLine=plan?.lines.find(l=>l.ticker==='SPY'), spymLine=plan?.lines.find(l=>l.ticker==='SPYM');
+              const groupAfter=spyLine&&spymLine?spyLine.target*spyLine.price+spymLine.target*spymLine.price:null;
+              return <Fragment key={t}><tr><th scope="row">{t}{t==='SPY'&&<small>기존 보유 유지</small>}{t==='SPYM'&&<small>SPY 합산 조정</small>}</th>
+                <td>{combined?'합산 20%':percent(weight)}</td><td>{line?money(line.weight*plan!.equity):'—'}</td>
+                <td title={market?.priceTimes?.[t]?timeLabel(market.priceTimes[t]):''}>{Number.isFinite(price)&&price!>0?money(price!):'—'}</td>
+                <td><input aria-label={`수진 ${t} 보유수량`} type="number" min="0" max="1000000000" step="any" value={Number.isNaN(held)?'':held} onChange={e=>edit({holdings:{...profile.holdings,[t]:e.target.valueAsNumber}})}/></td>
+                <td>{value===null?'—':money(value)}</td><td>{percent(current)}</td><td className={(deviation??0)<0?'negative':'positive'}>{percentagePoint(deviation)}</td>
+                <td>{line?quantityLabel(line.target):'—'}</td><td className={line&&line.trade<0?'negative':'positive'}>{line?`${line.trade>0?'+':''}${quantityLabel(line.trade)}`:'—'}</td>
+                <td>{finalValue===null?'—':money(finalValue)}</td><td>{finalValue===null||!plan?'—':percent(finalValue/plan.equity)}</td></tr>
+                {t==='SPYM'&&<tr className="sujin-sheet-total"><th scope="row">SPY+SPYM<small>합산 목표</small></th><td>{percent(group.weight)}</td><td>{comparison?money(comparison.equity*group.weight):'—'}</td><td>—</td><td>—</td><td>{comparison?money(group.current!*comparison.equity):'—'}</td><td>{percent(group.current)}</td><td className={(group.deviation??0)<0?'negative':'positive'}>{percentagePoint(group.deviation)}</td><td>—</td><td>—</td><td>{groupAfter===null?'—':money(groupAfter)}</td><td>{groupAfter===null||!plan?'—':percent(groupAfter/plan.equity)}</td></tr>}</Fragment>;
+            })}
+            <tr className="sujin-sheet-total"><th scope="row">현금·예수금</th><td>0.00%</td><td>—</td><td>—</td><td>—</td><td>{comparison?money(Math.max(0,comparison.equity-comparison.holdingsValue)):'—'}</td><td>{percent(cashWeight)}</td><td>{percentagePoint(cashWeight)}</td><td>—</td><td>—</td><td>{plan?money(plan.remainingCash):'—'}</td><td>{plan?percent(plan.remainingCash/plan.equity):'—'}</td></tr>
+          </tbody></table></div>
+        </fieldset>
+        <p className="micro">SPY와 SPYM 합산 목표는 20%입니다. 기존 SPY는 매수·매도 없이 유지하고 SPYM으로 나머지를 조정합니다. 차이는 현재 비중 − 목표 비중입니다.</p>
+        <p className="micro">목표 수량은 선택한 단위로 내림합니다. SPY의 소수점 보유량은 유지하며 다른 종목의 기존 소수점 잔량 매도는 발생할 수 있습니다. 입력 총자산에는 예수금과 추가 투입 금액을 포함하세요.</p>
+        <p className="micro">매도 후 매수하는 계산입니다. 실제 주문이나 보유수량을 변경하지 않으며 수수료·세금·체결가격 차이는 제외합니다.{plan&&` 가장 오래된 사용 시세 ${timeLabel(plan.oldestPriceAt)}`}</p>
+        {plan&&stale&&<label className="check"><input type="checkbox" checked={acknowledged} onChange={e=>setAcknowledged(e.target.checked)}/>수진 계산안이 지연 또는 직전 성공 시세 기준임을 확인했습니다.</label>}
+        <div className="sujin-actions"><button className="primary" disabled={!!busy||demo||!profileReady} onClick={saveProfile}>수진 보유수량·설정 저장</button><button disabled={!!busy||demo||!plan||(stale&&!acknowledged)} onClick={savePlan}>수진 계산안 저장 · 주문 아님</button><button disabled={!plan} onClick={downloadCsv}>CSV 다운로드</button></div>
+      </section>
     </>}
     {tab==='backtest'&&<section className="panel"><div className="section-title"><h2>수진 장기 백테스트</h2><span>고정비중 월별 리밸런싱</span></div>
       <p>수진 원본처럼 SPY 10% + SPYM 10%, PDBC 자체를 사용합니다. 모든 ETF의 공통 이력이 있는 완료된 월말부터 계산하며, HAA의 DBC 프록시는 적용하지 않습니다.</p>

@@ -89,16 +89,42 @@ it('SPY 초과 보유에서도 현재 비중과 목표 차이를 표시한다',(
   show();fireEvent.change(screen.getByLabelText('수진 SPY 보유수량'),{target:{value:'30'}});
   fireEvent.change(screen.getByLabelText('수진 SPYM 보유수량'),{target:{value:'5'}});
   expect(screen.getByText(/SPY만으로 목표 비중/)).toBeTruthy();
-  const table=screen.getByRole('columnheader',{name:'자산군'}).closest('table')!;
-  const row=within(table).getByRole('rowheader',{name:'SPY+SPYM'}).closest('tr')!;
-  expect(row.textContent).toContain('35.00%20.00%+15.00%p');
+  const table=screen.getByRole('columnheader',{name:'종목'}).closest('table')!;
+  const row=within(table).getByRole('rowheader',{name:/SPY\+SPYM/}).closest('tr')!;
+  expect(row.textContent).toContain('20.00%');expect(row.textContent).toContain('35.00%');expect(row.textContent).toContain('+15.00%p');
   const cash=within(table).getByRole('rowheader',{name:'현금·예수금'}).closest('tr')!;
-  expect(cash.textContent).toContain('65.00%0.00%+65.00%p');
+  expect(cash.textContent).toContain('65.00%');expect(cash.textContent).toContain('0.00%');expect(cash.textContent).toContain('+65.00%p');
 });
 
 it('시세가 없으면 목표를 유지하고 현재 비중과 차이는 표시하지 않는다',()=>{
   fixture.docs.delete('market/sujin');show();
-  const table=screen.getByRole('columnheader',{name:'자산군'}).closest('table')!;
-  const row=within(table).getByRole('rowheader',{name:'SPY+SPYM'}).closest('tr')!;
-  expect(row.textContent).toContain('—20.00%—');
+  const table=screen.getByRole('columnheader',{name:'종목'}).closest('table')!;
+  const row=within(table).getByRole('rowheader',{name:/SPY\+SPYM/}).closest('tr')!;
+  expect(row.textContent).toContain('20.00%');expect(row.textContent).toContain('—');
+  for(const t of SUJIN_TICKERS) expect((screen.getByLabelText(`수진 ${t} 보유수량`) as HTMLInputElement).disabled).toBe(false);
+});
+
+
+it('각 종목의 입력과 평가액·현재 비중·목표 및 매매 수량이 같은 행에서 갱신된다',()=>{
+  show();
+  const table=screen.getByRole('table',{name:''});
+  const input=within(table).getByLabelText('수진 QQQM 보유수량');
+  fireEvent.change(input,{target:{value:'8'}});
+  const row=input.closest('tr')!;
+  expect(row.textContent).toContain('$100.00');
+  expect(row.textContent).toContain('$800.00');
+  expect(row.textContent).toContain('8.00%');
+  expect(row.textContent).toContain('15.00%');
+  expect(row.textContent).toContain('-7.00%p');
+  expect(row.textContent).toContain('+7');
+});
+
+
+it('계산안이 없어도 표시된 시세가 오래됐으면 경고한다',()=>{
+  fixture.docs.set('status/sujinQuotes',{ok:false});
+  show();
+  fireEvent.change(screen.getByLabelText('수진 SPY 보유수량'),{target:{value:'30'}});
+  expect(screen.getByText(/SPY만으로 목표 비중/)).toBeTruthy();
+  expect(screen.getByText(/장외·지연 시세 또는 직전 성공값/)).toBeTruthy();
+  expect(screen.queryByRole('checkbox')).toBeNull();
 });

@@ -9,6 +9,7 @@ import { PensionPortfolio } from './PensionPortfolio';
 import { useFamilyAccess } from './familyAccess';
 import { FamilyAccessPanel } from './FamilyAccessPanel';
 import { marketSession } from './marketSession';
+import './haa-sheet.css';
 import { buildPlan, defaultProfile, money, percent, percentagePoint, quantityLabel, timeLabel, validateProfile } from './portfolio';
 import { TICKERS, type Backtest, type Market, type Profile, type Rebalance, type Signal, type UpdateStatus } from './types';
 
@@ -115,6 +116,11 @@ export default function App() {
   if (confirmed && market && profileReady) { try { plan = buildPlan(profile, confirmed, market); } catch(e) { planError = explainError(e); } }
   const stale = !market || Object.entries(market.priceTimes).some(([ticker,t]) =>
     (profile.holdings[ticker] > 0 || plan?.lines.some(l => l.ticker === ticker)) && now - new Date(t).getTime() > 30*60000);
+  const quoteStale = !!market && Object.entries(market.prices).some(([ticker,price]) => {
+    if (!Number.isFinite(price) || price <= 0) return false;
+    const timestamp = Date.parse(market.priceTimes[ticker] ?? '');
+    return !Number.isFinite(timestamp) || now - timestamp > 30*60000 || timestamp - now > 60000;
+  });
   const failed = Object.values(statuses).some(s => !s.ok);
   async function saveProfile() {
     if (!db || !user || demo || !approved || !dataOwnerUid || !profileReady) return;
@@ -179,35 +185,37 @@ export default function App() {
             <div className="table-scroll"><table><thead><tr><th>자산</th><th>확정 점수</th><th>예상 점수</th>{[1,3,6,12].map(n=><th key={n}>예상 {n}개월</th>)}</tr></thead>
               <tbody>{TICKERS.filter(t=>t!=='SPYM').map(t=><tr key={t}><th>{t}{t==='TIP'?' · 카나리아':''}</th><td>{percent(confirmed?.scores[t])}</td><td>{percent(preview?.scores[t])}</td>{[1,3,6,12].map(n=><td key={n}>{percent(preview?.returns[String(n)]?.[t])}</td>)}</tr>)}</tbody></table></div>
           </details>
-          <div className="workspace-grid">
-            <section className="panel holdings"><div className="section-title"><h2>나의 보유자산</h2><span>USD 기준</span></div>
-              <fieldset className="family-fields" disabled={!profileReady||saving}>
-              <label>실전 S&P500 ETF<select value={profile.sp500} onChange={e=>edit({sp500:e.target.value as Profile['sp500']})}><option>SPY</option><option>SPYM</option></select></label>
-              <p className="micro">선택 ETF는 실행 수량에만 반영합니다. 모멘텀과 백테스트는 항상 SPY입니다.</p>
-              <label>HAA 수량 단위<select value={profile.quantityMode??'whole'} onChange={e=>edit({quantityMode:e.target.value as Profile['quantityMode']})}><option value="whole">정수 · 1주 단위</option><option value="fractional">소수점 · 0.000001주 단위</option></select></label>
-              <p className="micro">목표수량을 선택 단위로 내림합니다. 실제 주문 가능한 소수점 단위는 증권사에서 확인하세요.</p>
-              <label>현금 잔액 (USD)<input type="number" min="0" max="1000000000000" step="0.01" value={Number.isNaN(profile.cash)?'':profile.cash} onChange={e=>edit({cash:e.target.valueAsNumber})}/></label>
-              <div className="holdings-grid">{TICKERS.map(t=><label key={t}>{t}<input aria-label={`${t} 보유수량`} type="number" min="0" max="1000000000" step="any" value={Number.isNaN(profile.holdings[t])?'':profile.holdings[t]} onChange={e=>edit({holdings:{...profile.holdings,[t]:e.target.valueAsNumber}})}/></label>)}</div>
-              </fieldset>
-              {!profileReady&&<p className="micro">기존 보유수량을 불러오는 중입니다. 확인 전에는 저장할 수 없습니다.</p>}
-              <button className="primary full" disabled={saving || demo || !profileReady} onClick={saveProfile}>{saving?'저장 중…':'보유수량·설정 저장'}</button>
-            </section>
-            <section className="panel rebalance"><div className="section-title"><h2>리밸런싱 계산안</h2><span>{confirmed?.month ?? '—'} 확정 신호 기준</span></div>
+          <section className="panel haa-sheet" aria-label="현근 보유자산과 리밸런싱">
+            <div className="section-title"><h2>보유자산과 리밸런싱 계산안</h2><span>{confirmed?.month ?? '—'} 확정 신호 · USD 기준</span></div>
+            <fieldset className="family-fields" disabled={!profileReady||saving}>
+              <div className="haa-sheet-controls">
+                <label>실전 S&P500 ETF<select value={profile.sp500} onChange={e=>edit({sp500:e.target.value as Profile['sp500']})}><option>SPY</option><option>SPYM</option></select></label>
+                <label>HAA 수량 단위<select value={profile.quantityMode??'whole'} onChange={e=>edit({quantityMode:e.target.value as Profile['quantityMode']})}><option value="whole">정수 · 1주 단위</option><option value="fractional">소수점 · 0.000001주 단위</option></select></label>
+                <label>현금 잔액 (USD)<input type="number" min="0" max="1000000000000" step="0.01" value={Number.isNaN(profile.cash)?'':profile.cash} onChange={e=>edit({cash:e.target.valueAsNumber})}/></label>
+              </div>
+              <p className="micro">선택 ETF는 실행 수량에만 반영합니다. 모멘텀과 백테스트는 항상 SPY입니다. 목표수량은 선택 단위로 내림하며 실제 주문 단위는 증권사에서 확인하세요.</p>
+              {plan && <div className="balance"><span>현재 평가금액</span><strong>{money(plan.equity)}</strong><small>{profile.quantityMode==='fractional'?'소수점':'정수'} 목표수량 적용 후 예상 현금 {money(plan.remainingCash)}</small></div>}
               {planError && <p className="error">{planError}</p>}
-              {plan ? <>
-                <div className="balance"><span>현재 평가금액</span><strong>{money(plan.equity)}</strong><small>{profile.quantityMode==='fractional'?'소수점':'정수'} 목표수량 적용 후 예상 현금 {money(plan.remainingCash)}</small></div>
-                {(stale || failed) && <p className="notice">장외·지연 시세 또는 직전 성공값입니다. 거래 전 증권사 가격을 확인하세요.</p>}
-                <div className="table-scroll"><table><thead><tr><th>실전 종목</th><th>현재 비중</th><th>목표 비중</th><th>차이</th><th>보유 → 목표</th><th>매매 수량</th><th>평가 가격</th></tr></thead><tbody>
-                  {plan.lines.map(l=>{const current=plan.equity>0?l.held*l.price/plan.equity:null;return <tr key={l.ticker}><th scope="row">{l.ticker}</th><td>{percent(current)}</td><td>{percent(l.weight)}</td><td>{percentagePoint(current===null?null:current-l.weight)}</td><td>{quantityLabel(l.held)} → {quantityLabel(l.target)}</td><td className={l.trade<0?'negative':'positive'}>{l.trade>0?'+':''}{quantityLabel(l.trade)}</td><td title={timeLabel(market?.priceTimes[l.ticker])}>{money(l.price)}</td></tr>;})}
-                  <tr><th scope="row">현금</th><td>{percent(plan.equity>0?profile.cash/plan.equity:null)}</td><td>{percent(confirmed?.weights.CASH??0)}</td><td>{percentagePoint(plan.equity>0?profile.cash/plan.equity-(confirmed?.weights.CASH??0):null)}</td><td>—</td><td>—</td><td>—</td></tr>
-                </tbody></table></div>
-                <p className="micro">현재 비중은 현금을 포함한 현재 평가금액 기준입니다. 차이는 현재 비중에서 확정 신호의 목표 비중을 뺀 값입니다.</p>
-                <p className="micro">매도 후 매수하는 계산입니다. 수수료·세금·환전·호가 차이는 제외하며, 보유자산은 자동 변경하지 않습니다. 가격 셀에 마우스를 올리면 시세 시각을 확인할 수 있습니다.</p>
-                {(stale || failed) && <label className="check"><input type="checkbox" checked={acknowledged} onChange={e=>setAcknowledged(e.target.checked)}/>지연 또는 직전 성공 시세인 점을 확인했습니다.</label>}
-                <button disabled={saving || demo || !profileReady || ((stale || failed) && !acknowledged)} onClick={recordPlan}>계산안 이력 저장 · 주문 아님</button>
-              </> : !planError && <p className="empty">확정 신호와 가격이 준비되면 보유수량에 맞는 계산안이 표시됩니다.</p>}
-            </section>
-          </div>
+              {!plan && !planError && <p className="micro">확정 신호와 가격이 준비되면 리밸런싱 계산안이 표시됩니다. 보유수량은 미리 입력할 수 있습니다.</p>}
+              {market && (stale || failed || quoteStale) && <p className="notice">장외·지연 시세 또는 직전 성공값입니다. 거래 전 증권사 가격을 확인하세요.</p>}
+              <p className="micro haa-sheet-hint">표를 좌우로 밀어 현재 시세, 보유 현황과 매매 계획을 함께 확인하세요.</p>
+              <div className="haa-sheet-scroll" role="region" aria-label="현근 종목별 표 가로 스크롤" tabIndex={0}><table className="haa-sheet-table"><thead><tr><th>실전 종목</th><th>현재 비중</th><th>목표 비중</th><th>차이</th><th>현재 가격</th><th>보유 평가액</th><th>보유수량 입력</th><th>보유 → 목표</th><th>매매 수량</th><th>예상 매매액</th></tr></thead><tbody>
+                {TICKERS.map(t=>{const l=plan?.lines.find(item=>item.ticker===t);const price=market?.prices[t];const validPrice=typeof price==='number'&&Number.isFinite(price)&&price>0;const held=profile.holdings[t];const validHeld=Number.isFinite(held)&&held>=0;const current=plan&&plan.equity>0&&validHeld&&validPrice?held*price/plan.equity:null;const weight=l?.weight??0;return <tr key={t}>
+                  <th scope="row">{t}</th><td>{percent(current)}</td><td>{plan?percent(weight):'—'}</td><td>{plan?percentagePoint(current===null?null:current-weight):'—'}</td>
+                  <td title={market?.priceTimes[t]?timeLabel(market.priceTimes[t]):undefined}>{validPrice?money(price):'—'}</td><td>{validPrice&&validHeld?money(held*price):'—'}</td>
+                  <td><input aria-label={`${t} 보유수량`} type="number" min="0" max="1000000000" step="any" value={Number.isNaN(held)?'':held} onChange={e=>edit({holdings:{...profile.holdings,[t]:e.target.valueAsNumber}})}/></td>
+                  <td>{plan?`${quantityLabel(held)} → ${quantityLabel(l?.target??0)}`:'—'}</td><td className={l?.trade&&l.trade<0?'negative':'positive'}>{plan?`${l?.trade&&l.trade>0?'+':''}${quantityLabel(l?.trade??0)}`:'—'}</td><td>{plan?money(l?.amount??0):'—'}</td>
+                </tr>;})}
+                <tr className="haa-cash-row"><th scope="row">현금</th><td>{percent(plan&&plan.equity>0?profile.cash/plan.equity:null)}</td><td>{plan?percent(confirmed?.weights.CASH??0):'—'}</td><td>{plan?percentagePoint(plan.equity>0?profile.cash/plan.equity-(confirmed?.weights.CASH??0):null):'—'}</td><td>—</td><td>{Number.isFinite(profile.cash)?money(profile.cash):'—'}</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+              </tbody></table></div>
+            </fieldset>
+            {!profileReady&&<p className="micro">기존 보유수량을 불러오는 중입니다. 확인 전에는 저장할 수 없습니다.</p>}
+            <p className="micro">현재 비중은 현금을 포함한 현재 평가금액 기준입니다. 차이는 현재 비중에서 확정 신호의 목표 비중을 뺀 값입니다.</p>
+            <p className="micro">매도 후 매수하는 계산입니다. 수수료·세금·환전·호가 차이는 제외하며, 보유자산은 자동 변경하지 않습니다. 가격 셀에 마우스를 올리면 시세 시각을 확인할 수 있습니다.</p>
+            {plan && (stale || failed) && <label className="check"><input type="checkbox" checked={acknowledged} onChange={e=>setAcknowledged(e.target.checked)}/>지연 또는 직전 성공 시세인 점을 확인했습니다.</label>}
+            <div className="haa-sheet-actions"><button className="primary" disabled={saving || demo || !profileReady} onClick={saveProfile}>{saving?'저장 중…':'보유수량·설정 저장'}</button>
+              {plan && <button disabled={saving || demo || !profileReady || ((stale || failed) && !acknowledged)} onClick={recordPlan}>계산안 이력 저장 · 주문 아님</button>}</div>
+          </section>
         </>}
         {tab === 'backtest' && <section className="panel"><div className="section-title"><h2>장기 백테스트</h2><span>HAA 80% + BRK-B 20%</span></div>
           <p>실전 ETF 선택과 무관하게 SPY를 사용합니다. 현재 원본 코드와 동일하게 PDBC 슬롯은 <strong>전 기간 DBC 프록시</strong>입니다.</p>
