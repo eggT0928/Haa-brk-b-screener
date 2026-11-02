@@ -6,4 +6,5 @@
 
 .pension-plan-asset{min-width:175px;white-space:normal}.pension-plan-asset small{display:block;margin-top:4px;color:var(--muted);font-weight:normal}
 
-.pension-rounding-heading{margin:12px 0}.pension-rounding-heading .check{display:inline-flex}.pension-rounding-buttons{display:flex;gap:5px;align-items:center;flex-wrap:wrap;min-width:150px}.pension-rounding-buttons button{white-space:nowrap;padding:6px 8px;font-size:12px}.pension-rounding-buttons button[aria-pressed="true"]{opacity:1;background:#e6ecdf;border-color:#779875}.pension-rounding-buttons small{flex-basis:100%;color:var(--muted);font-size:11px}
+
+.pension-quantity-display{max-width:260px;margin:16px 0}.pension-quantity-display select{margin-top:7px}

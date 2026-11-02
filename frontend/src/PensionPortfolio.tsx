@@ -37,6 +37,11 @@ export function PensionPortfolio({user,ownerUid,now}:{user:User|null;ownerUid?:s
   function edit(next:Partial<PensionProfile>){if(!ready||busy)return;dirty.current=true;setProfile(p=>({...p,...next}));setMessage('');}
   let plan:ReturnType<typeof buildPensionPlan>|null=null,planError='';
   if(ready&&market&&(profile.totalBalance>0||profile.cashBalance!==undefined||Object.values(profile.holdings).some(n=>n>0))){try{plan=buildPensionPlan(profile,market);}catch(e){planError=explain(e);}}
+  const displayLines=plan?.lines.map(l=>{
+    const target=showFraction&&profile.targetOverrides[l.ticker]===null?Math.floor(l.calculated*100)/100:l.target;
+    return {...l,displayTarget:target,displayTrade:Math.round((target-l.held)*100)/100};
+  })??[];
+  const displayCash=plan?plan.equity-displayLines.reduce((sum,l)=>sum+l.displayTarget*l.price,0):0;
   const weights=effectivePensionWeights(profile,market);
   const allocation=ready?pensionAllocation(profile,market):null;
   const weightSum=Object.values(profile.weights).reduce((s,w)=>s+w,0)+profile.goldTargetWeight;
@@ -119,24 +124,15 @@ export function PensionPortfolio({user,ownerUid,now}:{user:User|null;ownerUid?:s
         {!market&&<p className="empty">‘연금 시세 갱신’을 눌러 가격을 불러오세요. 기존 Streamlit 입력은 자동으로 이전되지 않으므로 처음 한 번 입력·저장해 주세요. 이전 9종목 구성의 입력과 이력은 별도로 보존됩니다.</p>}
         {market&&!plan&&!planError&&<p className="empty">보유수량과 예수금 또는 기존 총자산을 입력하면 목표 수량을 계산합니다.</p>}{planError&&<p className="error" role="alert">{planError}</p>}
         {plan&&<>
-          <div className="metric-grid">{[['계산 기준 총자산',won(plan.equity)],['보유 ETF 평가액',won(plan.holdingsValue)],['리밸런싱 후 예상 예수금',won(plan.remainingCash)],['계산 기준 손익',plan.profit===null?'—':won(plan.profit)],['원금 대비 수익률',percent(plan.profitRate)]].map(([label,value])=><div key={label}><span>{label}</span><strong>{value}</strong></div>)}</div>
+          <div className="metric-grid">{[['계산 기준 총자산',won(plan.equity)],['보유 ETF 평가액',won(plan.holdingsValue)],[showFraction?'소수점 계산상 잔액':'리밸런싱 후 예상 예수금',won(showFraction?displayCash:plan.remainingCash)],['계산 기준 손익',plan.profit===null?'—':won(plan.profit)],['원금 대비 수익률',percent(plan.profitRate)]].map(([label,value])=><div key={label}><span>{label}</span><strong>{value}</strong></div>)}</div>
           <p className="micro">원금 0은 미입력으로 처리합니다. 손익은 계산 기준 총자산에서 원금을 뺀 값입니다. 가장 오래된 사용 시세 {timeLabel(plan.oldestPriceAt)}</p>
-          <div className="pension-rounding-heading"><label className="check"><input type="checkbox" checked={showFraction} onChange={e=>setShowFraction(e.target.checked)}/>소수점 계산값과 올림·버림 선택 보기</label></div>
-          {showFraction&&<p className="micro">소수점 계산값은 목표 배분액을 가격으로 나눈 참고값이며 소수점 넷째 자리까지 표시합니다. 버림·올림은 표시 전 계산값을 기준으로 합니다. 선택하면 최종 목표와 예상 예수금이 바로 바뀝니다. 선택한 수량은 직접 지정값으로 남으며, 자동을 누르면 시세에 따라 다시 계산합니다. 최종 주문 수량은 정수로 표시합니다.</p>}
-          <div className="table-scroll"><table><thead><tr><th>종목</th><th>목표 배분액</th><th>{showFraction?'계산 수량 · 소수점':'계산 수량'}</th>{showFraction&&<th>최종 목표 선택</th>}<th>보유 → 최종 목표</th><th>매매 수량</th><th>목표 금액</th></tr></thead><tbody>{plan.lines.map(l=>{
-            const lower=Math.floor(l.calculated),upper=Math.ceil(l.calculated);
-            const extra=Math.max(0,(upper-l.target)*l.price-plan.remainingCash);
-            const canRoundUp=extra<=.0001&&upper<=1e9;
-            return <tr key={l.ticker}><th scope="row" className="pension-plan-asset">{PENSION_ASSETS.find(a=>a.code===l.ticker)?.name??l.ticker}<small>{l.ticker}</small></th><td>{won(l.allocation)}</td><td title={`정확한 계산값 ${l.calculated}주`}>{showFraction?l.calculated.toFixed(4):l.calculated.toFixed(2)}</td>{showFraction&&<td><div className="pension-rounding-buttons">
-              <button type="button" aria-label={`${l.ticker} 버림 ${lower}주`} aria-pressed={l.target===lower} disabled={!ready||!!busy||l.target===lower} onClick={()=>edit({targetOverrides:{...profile.targetOverrides,[l.ticker]:lower}})}>버림 {lower}주</button>
-              <button type="button" aria-label={`${l.ticker} 올림 ${upper}주`} aria-pressed={l.target===upper} disabled={!ready||!!busy||l.target===upper||!canRoundUp} title={!canRoundUp?(upper>1e9?'올림 수량이 허용 범위를 넘습니다.':`올림하려면 ${won(extra)}이 더 필요합니다.`):undefined} onClick={()=>edit({targetOverrides:{...profile.targetOverrides,[l.ticker]:upper}})}>올림 {upper}주</button>
-              <button type="button" aria-label={`${l.ticker} 자동 계산`} disabled={!ready||!!busy||profile.targetOverrides[l.ticker]===null} onClick={()=>edit({targetOverrides:{...profile.targetOverrides,[l.ticker]:null}})}>자동</button>
-              {!canRoundUp&&upper!==lower&&<small>{upper>1e9?'올림 수량 허용 범위 초과':`올림 시 ${won(extra)} 부족`}</small>}
-            </div></td>}<td>{l.held} → {l.target}</td><td className={l.trade<0?'negative':'positive'}>{l.trade>0?'+':''}{l.trade}</td><td>{won(l.target*l.price)}</td></tr>;
-          })}</tbody></table></div>
+          <div className="pension-quantity-display"><label>연금 수량 표시 방식<select aria-label="연금 수량 표시 방식" value={showFraction?'fractional':'whole'} onChange={e=>setShowFraction(e.target.value==='fractional')}><option value="whole">정수 · 1주</option><option value="fractional">소수점 · 0.01주 (참고)</option></select></label></div>
+          {showFraction&&<p className="micro">소수점 수량은 목표 비중에 맞춘 계산 참고값이며 0.01주 단위로 내림합니다. 직접 입력한 목표수량은 그대로 적용됩니다. 거래 가능한 수량 단위를 확인해 주세요. 소수점 화면에서는 계산안 저장과 CSV 다운로드가 제한됩니다.</p>}
+          {showFraction&&displayCash<-.0001&&<p className="notice">직접 입력한 목표수량을 포함한 소수점 계산상 금액이 총자산을 초과합니다. 입력 수량을 조정하세요.</p>}
+          <div className="table-scroll"><table><thead><tr><th>종목</th><th>목표 배분액</th><th>계산 수량</th><th>보유 → 최종 목표</th><th>매매 수량</th><th>목표 금액</th></tr></thead><tbody>{displayLines.map(l=><tr key={l.ticker}><th scope="row" className="pension-plan-asset">{PENSION_ASSETS.find(a=>a.code===l.ticker)?.name??l.ticker}<small>{l.ticker}</small></th><td>{won(l.allocation)}</td><td>{l.calculated.toFixed(2)}</td><td>{l.held} → {showFraction?l.displayTarget.toFixed(2):l.displayTarget}</td><td className={l.displayTrade<0?'negative':'positive'}>{l.displayTrade>0?'+':''}{showFraction?l.displayTrade.toFixed(2):l.displayTrade}</td><td>{won(l.displayTarget*l.price)}</td></tr>)}</tbody></table></div>
           <p className="micro">매매 수량은 최종 목표에서 보유수량을 뺀 값입니다. 계산안 저장은 실제 주문이나 보유수량 변경을 수행하지 않습니다. 수수료·세금·호가 차이는 제외합니다.</p>
           {stale&&<label className="check"><input type="checkbox" checked={ack} onChange={e=>setAck(e.target.checked)}/>연금 계산안이 종가·지연 또는 직전 성공 시세 기준임을 확인했습니다.</label>}
-          <div className="pension-actions">{showFraction&&<button onClick={save} disabled={demo||!ready||!!busy}>목표수량·설정 저장</button>}<button onClick={record} disabled={demo||!!busy||(stale&&!ack)}>연금 계산안 저장</button><button onClick={download}>연금 CSV 다운로드</button></div>
+          <div className="pension-actions"><button onClick={record} disabled={demo||!!busy||showFraction||(stale&&!ack)}>연금 계산안 저장</button><button onClick={download} disabled={showFraction}>연금 CSV 다운로드</button></div>
         </>}
       </section>
     </>}
