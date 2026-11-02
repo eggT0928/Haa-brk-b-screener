@@ -39,6 +39,13 @@ def is_open(now):
     return bool(session is not None and session.market_open <= utc(now) < session.market_close)
 
 
+def is_recently_closed(now):
+    # 마감 직후의 마지막 정규장 체결가만 15:30 작업에서 받을 수 있다.
+    session = current_session(now)
+    stamp = utc(now)
+    return bool(session is not None and session.market_close <= stamp <= session.market_close + pd.Timedelta(minutes=3))
+
+
 def last_close(now):
     now = utc(now)
     day = now.tz_convert(KST).date()
@@ -69,9 +76,10 @@ def quote_payload(prices, timestamps, now, mode):
         stamp = utc(timestamps[ticker])
         if mode == "intraday":
             if (
-                not is_open(now)
+                not (is_open(now) or is_recently_closed(now))
                 or session is None
                 or stamp < session.market_open
+                or stamp > session.market_close
                 or not -60 <= (now - stamp).total_seconds() <= 1500
             ):
                 raise ValueError(f"{ticker} 장중 시세가 누락되었거나 오래되었습니다.")
@@ -91,7 +99,7 @@ def quote_payload(prices, timestamps, now, mode):
 
 class PensionMarket:
     def _naver(self, now):
-        opened = is_open(now)
+        opened = is_open(now) or is_recently_closed(now)
         day, close_stamp = last_close(now)
 
         def fetch(ticker):
@@ -105,7 +113,8 @@ class PensionMarket:
             response.raise_for_status()
             data = response.json()
             if opened:
-                if data.get("itemCode") != ticker or data.get("marketStatus") != "OPEN":
+                valid_states = {"OPEN"} if is_open(now) else {"OPEN", "CLOSE", "CLOSED"}
+                if data.get("itemCode") != ticker or data.get("marketStatus") not in valid_states:
                     raise ValueError(f"{ticker} 정규장 체결 시세가 아닙니다.")
                 stamp = utc(data["localTradedAt"])
                 raw = data["closePrice"]
@@ -171,7 +180,7 @@ class PensionMarket:
             return self._naver(now)
         except Exception:
             logger.warning("Naver 연금 시세 응답 불가. Yahoo 보조 조회를 시도합니다.")
-        if is_open(now):
+        if is_open(now) or is_recently_closed(now):
             try:
                 return retry(lambda: self._intraday(now), attempts=1)
             except Exception:

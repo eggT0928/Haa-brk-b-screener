@@ -1,4 +1,4 @@
-"""배포 진입점. 공유 예약 작업 2개와 인증된 백테스트·수동 갱신 API 1개."""
+"""배포 진입점. 미국·연금 예약 작업과 인증된 백테스트·수동 갱신 API."""
 
 import json
 import logging
@@ -16,6 +16,7 @@ from haa.service import cached_backtest
 from haa.store import create_store
 from pension.market import PensionMarket
 from pension.service import refresh_quotes as pension_refresh
+from pension.service import scheduled_refresh as pension_scheduled_refresh
 from sujin.market import SujinMarket
 from sujin.service import RefreshBusy, refresh_quotes, refresh_with_haa
 from sujin.service import run_backtest as sujin_backtest
@@ -57,6 +58,17 @@ def refresh_intraday(event: scheduler_fn.ScheduledEvent) -> None:
 def refresh_daily(event: scheduler_fn.ScheduledEvent) -> None:
     # 일일 장기 캐시 갱신과 월말 확정을 한 작업으로 결합한다. 다음 평일 재실행도 복구 가능하다.
     refresh_with_haa(store(), YahooMarket(), SujinMarket(), pd.Timestamp.now(tz="UTC"), "daily")
+
+
+@scheduler_fn.on_schedule(
+    schedule="*/10 9-15 * * 1-5",
+    timezone="Asia/Seoul",
+    timeout_sec=60,
+    retry_count=0,
+)
+def refresh_pension_intraday(event: scheduler_fn.ScheduledEvent) -> None:
+    # 15:40/15:50 및 휴장일 실행은 실제 KRX 달력 검사 후 외부 시세를 요청하지 않는다.
+    pension_scheduled_refresh(store(), PensionMarket(), pd.Timestamp.now(tz="UTC"))
 
 
 def response(payload, status=200):

@@ -35,7 +35,7 @@ it('종가 계산안은 확인 후에만 별도 이력에 저장한다',async()=
   expect(fixture.add.mock.calls[0][1]).toMatchObject({currency:'KRW',month:'2026-10',equity:1000000});expect(fixture.add.mock.calls[0][1].lines.slice(0,3)).toEqual([0,10000,12]);expect(fixture.write).not.toHaveBeenCalled();
 });
 it('비중 합계가 틀리면 계산안을 저장하지 못한다',()=>{
-  show();fireEvent.change(screen.getByLabelText('연금 379800 목표 비중 (%)'),{target:{value:'25'}});expect(screen.queryByRole('button',{name:'연금 계산안 저장'})).toBeNull();expect(screen.getByRole('alert').textContent).toContain('100%');
+  show();fireEvent.change(screen.getByLabelText('연금 379800 목표 비중 (%)'),{target:{value:'25'}});expect((screen.getByRole('button',{name:'연금 계산안 저장'}) as HTMLButtonElement).disabled).toBe(true);expect(screen.getByRole('alert').textContent).toContain('100%');
 });
 it('인증된 수동 갱신에서 fallback 안내를 표시한다',async()=>{
   vi.mocked(fetch).mockResolvedValue({ok:true,headers:new Headers({'content-type':'application/json'}),json:async()=>({market,source:'fallback',message:'직전 성공값입니다.'})} as Response);
@@ -112,4 +112,22 @@ it('정수와 소수점 보기를 전환하면 목표·매매수량과 잔액이
   expect(gold().textContent).toContain('0 → 6');
   expect((screen.getByLabelText('연금 0072R0 목표 보유수량') as HTMLInputElement).value).toBe('6');
   expect(fixture.write).not.toHaveBeenCalled();expect(fixture.add).not.toHaveBeenCalled();
+});
+
+it('한 표의 같은 종목 행에서 수량 편집과 현재·조정 후 결과를 함께 확인한다',()=>{
+  show();const section=screen.getByRole('heading',{name:'연금 리밸런싱 계산안'}).closest('section')!;
+  const row=()=>within(section).getByRole('row',{name:/379800/});
+  fireEvent.change(within(row()).getByLabelText('연금 379800 보유수량'),{target:{value:'5'}});
+  expect(row().textContent).toContain('5.00%');expect(row().textContent).toContain('+7');
+  fireEvent.change(within(row()).getByLabelText('연금 379800 목표 보유수량'),{target:{value:'7'}});
+  expect(row().textContent).toContain('+2');expect(row().textContent).toContain('₩70,000');expect(row().textContent).toContain('7.00%');
+  expect(within(row()).getByLabelText('연금 379800 목표 비중 (%)')).toBeTruthy();
+});
+it('목표수량이 총자산을 넘으면 오류를 표시하면서 표에서 바로 수정할 수 있다',()=>{
+  show();const field=screen.getByLabelText('연금 379800 목표 보유수량');
+  fireEvent.change(field,{target:{value:'101'}});
+  expect(screen.getByRole('alert').textContent).toContain('총자산을 초과');
+  expect(screen.getByLabelText('연금 379800 목표 보유수량')).toBeTruthy();
+  fireEvent.change(field,{target:{value:'0'}});
+  expect(screen.queryByRole('alert')).toBeNull();
 });
