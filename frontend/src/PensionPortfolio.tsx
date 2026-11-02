@@ -100,6 +100,8 @@ export function PensionPortfolio({user,ownerUid,now}:{user:User|null;ownerUid?:s
           <p className="micro">예수금을 직접 입력하면 시세가 변할 때 총자산이 자동으로 바뀝니다. 미입력 시 기존 총자산과 보유 평가액의 차이로 예수금을 추정합니다. 금 ETF의 개별 목표는 현재 금 보유 평가액에 비례해 계산합니다. 시세 기준 시각을 확인하세요.</p>
         </>}
       </section>
+      <p className="micro pension-layout-hint">좌우로 밀어서 연금 입력과 계산안을 함께 확인하세요.</p>
+      <div className="pension-layout" tabIndex={0} aria-label="연금 입력과 계산안 가로 스크롤">
       <section className="panel pension-inputs"><div className="section-title"><h2>연금 자산과 목표 비중</h2><span>KRW · 정수 1주</span></div>
         {!ready&&<p className="notice">저장된 연금 정보를 확인하는 중입니다. 확인 전에는 수정·저장할 수 없습니다.</p>}
         <fieldset disabled={!ready||!!busy} className="sujin-fields">
@@ -120,7 +122,7 @@ export function PensionPortfolio({user,ownerUid,now}:{user:User|null;ownerUid?:s
         <p className="micro">목표 보유수량은 리밸런싱 후 보유할 전체 수량입니다. 0을 입력하면 전량 매도 대상으로 계산합니다. 비워 두면 총자산 × 목표 비중 ÷ 가격을 정수로 내림합니다. 상품명은 기존 앱 표기이며 종목코드로 구분합니다.</p>
         <button className="primary" onClick={save} disabled={demo||!ready||!!busy}>연금 보유수량·설정 저장</button>
       </section>
-      <section className="panel pension-plan"><div className="section-title"><h2>연금 리밸런싱 계산안</h2><span>현재 입력 기준</span></div>
+      <section className="panel pension-plan" tabIndex={0} aria-label="연금 리밸런싱 계산안"><div className="section-title"><h2>연금 리밸런싱 계산안</h2><span>현재 입력 기준</span></div>
         {!market&&<p className="empty">‘연금 시세 갱신’을 눌러 가격을 불러오세요. 기존 Streamlit 입력은 자동으로 이전되지 않으므로 처음 한 번 입력·저장해 주세요. 이전 9종목 구성의 입력과 이력은 별도로 보존됩니다.</p>}
         {market&&!plan&&!planError&&<p className="empty">보유수량과 예수금 또는 기존 총자산을 입력하면 목표 수량을 계산합니다.</p>}{planError&&<p className="error" role="alert">{planError}</p>}
         {plan&&<>
@@ -135,6 +137,7 @@ export function PensionPortfolio({user,ownerUid,now}:{user:User|null;ownerUid?:s
           <div className="pension-actions"><button onClick={record} disabled={demo||!!busy||showFraction||(stale&&!ack)}>연금 계산안 저장</button><button onClick={download} disabled={showFraction}>연금 CSV 다운로드</button></div>
         </>}
       </section>
+      </div>
     </>}
     {tab==='history'&&<section className="panel"><h2>연금 리밸런싱 이력</h2><p className="micro">최근 24건 · 계산안 저장 당시 입력과 가격 기준</p>{records.length?records.map(r=><details key={r.id}><summary>{r.month} · {won(r.equity)} · {r.kind}</summary><p className="micro">가격 조회 {timeLabel(r.priceUpdatedAt)} · 가장 오래된 가격 {timeLabel(r.oldestPriceAt)}</p><div className="table-scroll"><table><thead><tr><th>종목</th><th>비중</th><th>보유 → 목표</th><th>매매</th><th>가격</th></tr></thead><tbody>{r.lines.map((l,i)=><tr key={PENSION_CODES[i]}><th>{PENSION_CODES[i]}</th><td>{percent(r.weights[PENSION_CODES[i]])}</td><td>{l.held} → {l.target}</td><td>{l.target-l.held}</td><td>{won(l.price)}</td></tr>)}</tbody></table></div></details>):<p className="empty">저장한 연금 계산안이 없습니다.</p>}</section>}
   </div>;
