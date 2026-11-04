@@ -196,11 +196,11 @@ export default function App() {
             <fieldset className="family-fields" disabled={!profileReady||saving}>
               <div className="haa-sheet-controls">
                 <label>실전 S&P500 ETF<select value={profile.sp500} onChange={e=>edit({sp500:e.target.value as Profile['sp500']})}><option>SPY</option><option>SPYM</option></select></label>
-                <label>HAA 수량 단위<select value={profile.quantityMode??'whole'} onChange={e=>edit({quantityMode:e.target.value as Profile['quantityMode']})}><option value="whole">정수 · 1주 단위</option><option value="fractional">소수점 · 0.000001주 단위 계산</option></select></label>
+                <label>HAA 수량 단위<select value={profile.quantityMode??'whole'} onChange={e=>edit({quantityMode:e.target.value as Profile['quantityMode']})}><option value="whole">정수 · 1주 단위</option><option value="fractional">소수점 · 0.01주 단위</option></select></label>
                 <label>현금 잔액 (USD)<input type="number" min="0" max="1000000000000" step="0.01" value={Number.isNaN(profile.cash)?'':profile.cash} onChange={e=>edit({cash:e.target.valueAsNumber})}/></label>
               </div>
               <p className="micro">선택 ETF는 실행 수량에만 반영합니다. 모멘텀과 백테스트는 항상 SPY입니다. 목표수량은 선택 단위로 내림하며 실제 주문 단위는 증권사에서 확인하세요.</p>
-              <p className="micro">표의 수량은 소수 둘째 자리까지 반올림한 참고값입니다. 매매금액과 예상 현금은 정확한 계산 수량을 기준으로 하며, 아래에서 정확한 수량을 확인할 수 있습니다.</p>
+              <p className="micro">소수점 목표수량은 0.01주 단위로 내림합니다. 기존 보유수량은 그대로 유지하므로 매매수량에 더 작은 잔량이 포함될 수 있습니다. 표는 소수 둘째 자리까지 표시하며 정확한 수량은 아래에서 확인할 수 있습니다.</p>
               {plan && <div className="balance"><span>현재 평가금액</span><strong>{money(plan.equity)}</strong><small>{profile.quantityMode==='fractional'?'소수점':'정수'} 목표수량 적용 후 예상 현금 {money(plan.remainingCash)}</small></div>}
               {planError && <p className="error">{planError}</p>}
               {!plan && !planError && <p className="micro">확정 신호와 가격이 준비되면 리밸런싱 계산안이 표시됩니다. 보유수량은 미리 입력할 수 있습니다.</p>}

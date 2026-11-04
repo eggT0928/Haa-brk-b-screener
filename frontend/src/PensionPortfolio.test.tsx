@@ -131,3 +131,21 @@ it('목표수량이 총자산을 넘으면 오류를 표시하면서 표에서 �
   fireEvent.change(field,{target:{value:'0'}});
   expect(screen.queryByRole('alert')).toBeNull();
 });
+
+it('휴대폰 간편 보기와 전체 계산을 전환해도 입력한 수량과 목표를 유지한다',()=>{
+  show();
+  const row=within(screen.getByRole('row',{name:/379800/}));
+  fireEvent.change(row.getByLabelText('연금 379800 보유수량'),{target:{value:'5'}});
+  fireEvent.change(row.getByLabelText('연금 379800 목표 보유수량'),{target:{value:'7'}});
+  const view=within(screen.getByRole('group',{name:'연금 표 보기'}));
+  fireEvent.click(view.getByRole('button',{name:'전체 계산'}));
+  expect(view.getByRole('button',{name:'전체 계산'}).getAttribute('aria-pressed')).toBe('true');
+  expect(screen.getByRole('region',{name:'연금 현재 보유 비중'}).getAttribute('data-mobile-view')).toBe('all');
+  expect((row.getByLabelText('연금 379800 보유수량') as HTMLInputElement).value).toBe('5');
+  expect(row.getByText('+2')).toBeTruthy();
+  fireEvent.click(view.getByRole('button',{name:'간편 보기'}));
+  expect(view.getByRole('button',{name:'간편 보기'}).getAttribute('aria-pressed')).toBe('true');
+  expect(screen.getByRole('region',{name:'연금 현재 보유 비중'}).getAttribute('data-mobile-view')).toBe('simple');
+  expect((row.getByLabelText('연금 379800 목표 보유수량') as HTMLInputElement).value).toBe('7');
+  expect(fixture.write).not.toHaveBeenCalled();
+});

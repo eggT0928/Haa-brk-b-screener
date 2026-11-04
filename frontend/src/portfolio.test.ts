@@ -44,11 +44,14 @@ describe('실전 수량과 신호 분리', () => {
     expect(buildPlan(legacy,demoConfirmed,demoMarket).lines.every(l=>Number.isInteger(l.target))).toBe(true);
     expect(()=>validateProfile({...legacy,quantityMode:'unsupported' as never})).toThrow('수량 단위');
   });
-  it('소수점 목표는 여섯 자리로 내림하고 남은 현금이 음수가 되지 않는다',()=>{
+  it('소수점 목표는 0.01주로 내림하고 남은 현금이 음수가 되지 않는다',()=>{
     const p={...defaultProfile(),quantityMode:'fractional' as const};
     const fractional=buildPlan(p,demoConfirmed,demoMarket);
-    expect(fractional.lines.find(l=>l.ticker==='SPY')?.target).toBe(3.333333);
-    for(const line of fractional.lines)expect(line.target*line.price).toBeLessThanOrEqual(fractional.equity*line.weight+1e-9);
+    expect(fractional.lines.find(l=>l.ticker==='SPY')?.target).toBe(3.33);
+    for(const line of fractional.lines){
+      expect(line.target*100).toBeCloseTo(Math.round(line.target*100),8);
+      expect(line.target*line.price).toBeLessThanOrEqual(fractional.equity*line.weight+1e-9);
+    }
     expect(fractional.remainingCash).toBeGreaterThanOrEqual(0);
     expect(fractional.remainingCash).toBeLessThan(buildPlan({...p,quantityMode:'whole'},demoConfirmed,demoMarket).remainingCash);
     expect(demoConfirmed.weights.SPY).toBe(.2);
@@ -58,7 +61,7 @@ describe('실전 수량과 신호 분리', () => {
     const original={...p.holdings};
     const fractional=buildPlan(p,demoConfirmed,demoMarket);
     expect(fractional.lines.find(l=>l.ticker==='SPY')?.trade).toBe(-.12345678);
-    expect(fractional.lines.find(l=>l.ticker==='SPYM')?.target).toBe(Math.floor(fractional.equity*.2/70*1e6)/1e6);
+    expect(fractional.lines.find(l=>l.ticker==='SPYM')?.target).toBe(Math.floor(fractional.equity*.2/70*100)/100);
     const whole=buildPlan({...p,quantityMode:'whole'},demoConfirmed,demoMarket);
     expect(whole.lines.every(l=>Number.isInteger(l.target))).toBe(true);
     expect(p.holdings).toEqual(original);

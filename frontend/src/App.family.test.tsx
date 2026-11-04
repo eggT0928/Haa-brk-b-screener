@@ -49,5 +49,5 @@ it('계산안 이력에도 당시 수량 단위를 저장한다',async()=>{
   render(<App/>);
   fireEvent.click(screen.getByRole('checkbox',{name:'지연 또는 직전 성공 시세인 점을 확인했습니다.'}));
   fireEvent.click(screen.getByRole('button',{name:'계산안 이력 저장 · 주문 아님'}));
-  await waitFor(()=>expect(fixture.add).toHaveBeenCalledWith('users/owner/rebalances',expect.objectContaining({quantityMode:'fractional',lines:expect.arrayContaining([expect.objectContaining({ticker:'SPY',target:3.333333})])})));
+  await waitFor(()=>expect(fixture.add).toHaveBeenCalledWith('users/owner/rebalances',expect.objectContaining({quantityMode:'fractional',lines:expect.arrayContaining([expect.objectContaining({ticker:'SPY',target:3.33})])})));
 });

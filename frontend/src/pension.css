@@ -20,3 +20,26 @@
 @media(min-width:1400px){main:has(div:not([hidden])>.pension-workspace){max-width:1800px;padding-left:24px;padding-right:24px}}
 @media(max-width:850px){.portfolio-switch button{min-width:0}.portfolio-switch button span{white-space:normal}.pension-summary-inputs{grid-template-columns:repeat(2,minmax(0,1fr))}.pension-summary-metrics{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:600px){.portfolio-switch{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}.portfolio-switch button{padding:10px 7px;font-size:12px}.portfolio-switch button span{font-size:10px;line-height:1.5}.pension-summary-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.pension-sheet-actions label{width:100%}.pension-actions button{flex:1;min-width:135px}.pension-sheet-table input{font-size:16px}}
+
+@media(max-width:600px){
+  .pension-workspace .pension-sheet{padding:14px 10px}.pension-sheet .section-title{align-items:flex-start;gap:6px;flex-wrap:wrap}.pension-sheet .section-title h2{font-size:17px}
+  .pension-summary-inputs{gap:10px 8px}.pension-summary-inputs label{min-width:0;line-height:1.5}.pension-summary-inputs input{font-size:16px;width:100%;min-width:0;padding:10px 8px}.pension-summary-inputs input::placeholder{font-size:11px}
+  .pension-summary-metrics{gap:6px}.pension-summary-metrics>div{padding:8px}.pension-summary-metrics strong{font-size:15px}
+  .pension-sheet-actions{gap:8px;align-items:stretch}.pension-sheet-actions>span{width:100%;padding:0 2px}.pension-sheet-actions>button{flex:1;min-width:135px;padding:10px 8px}.pension-sheet-actions label{margin-top:2px}
+  .pension-sheet-table{min-width:1255px;table-layout:fixed;width:1255px;font-size:12px}.pension-sheet-table th,.pension-sheet-table td{padding:8px 5px}
+  .pension-sheet-table th:first-child,.pension-sheet-table tbody th{width:108px;min-width:108px;max-width:108px;overflow-wrap:anywhere;word-break:keep-all;line-height:1.35}
+  .pension-sheet-table tbody th strong{font-size:11px;font-weight:600}.pension-sheet-table tbody th small{font-size:10px}.pension-asset-group{display:none}
+  .pension-sheet-table th:nth-child(2){width:94px}.pension-sheet-table th:nth-child(3){width:88px}.pension-sheet-table th:nth-child(4){width:86px}.pension-sheet-table th:nth-child(5){width:90px}.pension-sheet-table th:nth-child(6){width:92px}
+  .pension-sheet-table input{width:76px;font-size:16px;padding:9px 5px;min-height:40px}.pension-sheet-table .pension-total-row>th:first-child{font-size:11px}
+  .pension-sheet-scroll{scrollbar-width:thin;border:1px solid var(--border);border-radius:6px}.pension-sheet-hint{font-size:11px;line-height:1.7}
+}
+
+.pension-mobile-view{display:none}
+@media(max-width:600px){
+  .pension-mobile-view{display:flex;gap:4px;padding:4px;margin:12px 0 8px;background:#e9ede3;border:1px solid var(--border);border-radius:8px}.pension-mobile-view button{flex:1;padding:10px 8px;min-height:42px;border-color:transparent;background:transparent}.pension-mobile-view button[aria-pressed=true]{background:var(--paper);border-color:#ccd7c2;color:var(--green);box-shadow:0 1px 3px #193d3210}
+  .pension-sheet[data-mobile-view=simple] .pension-sheet-table{min-width:558px;width:558px}
+  .pension-sheet[data-mobile-view=simple] .pension-sheet-table tr>:nth-child(n+7){display:none}
+}
+
+.pension-mobile-hint{display:none}
+@media(max-width:600px){.pension-mobile-hint{display:inline}.pension-desktop-hint{display:none}}

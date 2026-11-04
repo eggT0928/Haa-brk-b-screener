@@ -29,8 +29,8 @@ export function buildPlan(profile: Profile, signal: Signal, market: Market) {
   const equity = profile.cash + tickers.reduce((sum, t) => sum + profile.holdings[t] * market.prices[t], 0);
   const lines = tickers.map(ticker => {
     const price = market.prices[ticker], held = profile.holdings[ticker], weight = weights[ticker] ?? 0;
-    // 소수점 모드는 0.000001주 단위로 내림한다. 반올림으로 목표 배분 금액을 초과하지 않는다.
-    const units = profile.quantityMode === 'fractional' ? 1e6 : 1;
+    // 소수점 모드는 0.01주 단위로 내림한다. 기존 보유 잔량은 그대로 유지한다.
+    const units = profile.quantityMode === 'fractional' ? 100 : 1;
     const target = Math.floor(equity * weight / price * units) / units;
     if (!Number.isFinite(target) || target < 0 || target > 1e9) throw new Error(`${ticker} 목표수량이 허용 범위를 넘었습니다.`);
     const trade = Math.round((target - held) * 1e8) / 1e8;
@@ -43,7 +43,7 @@ export const percent = (n: number | null | undefined) => n == null ? '—' : `${
 // 차이는 현재 비중 − 목표 비중이며 단위는 퍼센트포인트다.
 export const percentagePoint = (n: number | null | undefined) => {if(n==null||!Number.isFinite(n))return '—';const value=Number((n*100).toFixed(2));return `${value>0?'+':''}${value.toFixed(2)}%p`;};
 
-// 목표는 소수점 6자리이며, 기존 소수 보유분 매매는 8자리까지 보존해 표시한다.
+// 기존 소수 보유분과 저장 이력의 정확한 수량은 8자리까지 보존해 표시한다.
 export const quantityLabel = (n: number) => new Intl.NumberFormat('ko-KR', {useGrouping:false,maximumFractionDigits:8}).format(n);
 export const money = (n: number) => new Intl.NumberFormat('ko-KR', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(n);
 export const timeLabel = (s?: string) => s ? new Date(s).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', hour12: false }) + ' KST' : '아직 없음';

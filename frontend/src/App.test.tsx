@@ -25,14 +25,17 @@ describe('한국어 웹앱', () => {
     fireEvent.change(screen.getByLabelText('SPYM 보유수량'),{target:{value:'10'}});
     expect(screen.getByText('10 → 30')).toBeTruthy();
   });
-  it('HAA 소수점 수량은 둘째 자리까지 표시하고 정확한 계산값을 따로 확인한다',()=>{
+  it('HAA 소수점 목표는 드롭다운과 계산 모두 0.01주 단위를 사용한다',()=>{
     render(<App/>);
+    expect(screen.getByRole('option',{name:'소수점 · 0.01주 단위'})).toBeTruthy();
     fireEvent.change(screen.getByLabelText('HAA 수량 단위'),{target:{value:'fractional'}});
     expect(screen.getByText('0 → 3.33')).toBeTruthy();
-    expect(screen.getByText('+3.33')).toBeTruthy();
+    expect(within(screen.getByRole('region',{name:'현근 종목별 표 가로 스크롤'})).getByText('+3.33')).toBeTruthy();
     fireEvent.click(screen.getByText('계산에 사용된 정확한 수량 보기'));
-    expect(screen.getByText('3.333333')).toBeTruthy();
-    expect(screen.getByText('+3.333333')).toBeTruthy();
+    const exact=screen.getByText('계산에 사용된 정확한 수량 보기').closest('details')!;
+    expect(within(exact).getByText('3.33')).toBeTruthy();
+    expect(within(exact).getByText('+3.33')).toBeTruthy();
+    expect(screen.queryByText('3.333333')).toBeNull();
     fireEvent.change(screen.getByLabelText('HAA 수량 단위'),{target:{value:'whole'}});
     expect(screen.getByText('0 → 3')).toBeTruthy();
     expect(screen.queryByText('0 → 3.33')).toBeNull();
@@ -41,7 +44,7 @@ describe('한국어 웹앱', () => {
     render(<App/>);
     fireEvent.change(screen.getByLabelText('HAA 수량 단위'),{target:{value:'fractional'}});
     fireEvent.change(screen.getByLabelText('현금 잔액 (USD)'),{target:{value:'2412'}});
-    fireEvent.change(screen.getByLabelText('SPY 보유수량'),{target:{value:'1'}});
+    fireEvent.change(screen.getByLabelText('SPY 보유수량'),{target:{value:'0.996'}});
     expect(screen.getByText('+<0.01')).toBeTruthy();
     fireEvent.change(screen.getByLabelText('VWO 보유수량'),{target:{value:'0.0049'}});
     expect((screen.getByLabelText('VWO 보유수량') as HTMLInputElement).value).toBe('0.0049');
